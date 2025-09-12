@@ -1,0 +1,103 @@
+# Security Scanner Configuration
+# This file can be placed in your project root as .security-scanner.yaml
+
+# Performance settings
+format: "text"          # text, json, sarif
+severity: "medium"      # low, medium, high, critical
+parallel: 0            # number of parallel workers (0 = auto)
+verbose: false
+
+# Directory filtering for performance optimization
+# Only scan these directories (if specified, improves performance significantly)
+allowed_dirs:
+  # - "src"             # Only scan src directory
+  # - "app"             # Only scan app directory
+  # - "lib"             # Only scan lib directory
+
+# Exclude these directories from scanning (improves performance)
+excluded_dirs:
+  - "vendor"            # Go/PHP dependencies
+  - "node_modules"      # Node.js dependencies
+  - ".git"              # Git repository
+  - ".svn"              # SVN repository
+  - "build"             # Build output
+  - "dist"              # Distribution files
+  - "target"            # Maven/Gradle target
+  - "bin"               # Binary files
+  - "obj"               # Object files
+  - "tmp"               # Temporary files
+  - "temp"              # Temporary files
+  - "cache"             # Cache files
+  - "logs"              # Log files
+  - ".vscode"           # VS Code settings
+  - ".idea"             # IntelliJ settings
+  - "coverage"          # Coverage reports
+  - "__pycache__"       # Python cache
+  - ".pytest_cache"     # Pytest cache
+  - ".tox"              # Tox environments
+  - ".mypy_cache"       # MyPy cache
+
+# Rules configuration
+rules:
+  # Enable specific security rules
+  enabled:
+    - sql_injection
+    - xss
+    - path_traversal
+    - command_injection
+    - hardcoded_secrets
+    - weak_crypto
+    - insecure_random
+    - xxe
+    - ldap_injection
+    - unsafe_deserialization
+    - csrf
+    - weak_authentication
+    - insecure_transport
+
+  # Disable specific rules (overrides enabled)
+  disabled: []
+
+  # Path to custom rules file (optional)
+  custom_rules_path: ""
+
+  # Legacy file patterns to ignore (use excluded_dirs above instead)
+  ignore_patterns:
+    - "*.min.js"
+    - "*.test.*"
+    - "*_test.go"
+    - "*.spec.*"
+
+  # Rule-level directory filtering (optional, overrides global settings)
+  allowed_dirs: []
+  excluded_dirs: []
+
+  # File extensions to scan
+  file_extensions:
+    - ".go"
+    - ".php"
+    - ".js"
+    - ".ts"
+    - ".java"
+    - ".py"
+    - ".rb"
+    - ".cs"
+    - ".cpp"
+    - ".c"
+    - ".h"
+    - ".hpp"
+    - ".jsx"
+    - ".tsx"
+    - ".vue"
+    - ".html"
+
+# Output configuration
+output:
+  format: "text"  # text, json, sarif
+  file: ""        # empty means stdout
+  severity: "medium"  # low, medium, high, critical
+
+# Performance configuration
+performance:
+  parallel: 0  # 0 = auto-detect CPU cores
+  timeout: 300  # seconds
