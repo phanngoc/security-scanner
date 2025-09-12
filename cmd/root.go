@@ -24,6 +24,10 @@ var (
 	verbose      bool
 	allowedDirs  []string
 	excludedDirs []string
+	noCache      bool
+	cacheDir     string
+	maxFiles     int
+	noLsp        bool
 )
 
 var rootCmd = &cobra.Command{
@@ -51,6 +55,10 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().StringSliceVar(&allowedDirs, "allow-dir", []string{}, "allowed directories to scan (improves performance)")
 	rootCmd.PersistentFlags().StringSliceVar(&excludedDirs, "exclude-dir", []string{}, "directories to exclude from scanning")
+	rootCmd.PersistentFlags().BoolVar(&noCache, "no-cache", false, "disable symbol table caching")
+	rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", "", "custom cache directory (default: .cache)")
+	rootCmd.PersistentFlags().IntVar(&maxFiles, "max-files", 0, "maximum number of files to process (0 = unlimited, useful for testing)")
+	rootCmd.PersistentFlags().BoolVar(&noLsp, "no-lsp", false, "disable LSP integration (fallback to basic parsing)")
 }
 
 func initConfig() {
@@ -102,8 +110,16 @@ func runScan(cmd *cobra.Command, args []string) error {
 	cfg.Verbose = verbose
 	cfg.AllowedDirs = allowedDirs
 	cfg.ExcludedDirs = excludedDirs
+	cfg.MaxFiles = maxFiles
+	cfg.NoLsp = noLsp
 
-	// Initialize scanner
+	// Configure cache
+	if noCache {
+		cfg.Cache.Enabled = false
+	}
+	if cacheDir != "" {
+		cfg.Cache.Directory = cacheDir
+	} // Initialize scanner
 	s := scanner.New(cfg, logger)
 
 	// Run scan

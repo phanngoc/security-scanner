@@ -374,6 +374,8 @@ func (s *Scanner) ruleAppliesToLanguage(rule *rules.Rule, language string) bool 
 
 // walkDirectory walks the directory and sends files for processing
 func (s *Scanner) walkDirectory(ctx context.Context, jobs chan<- *FileJob, result *ScanResult) error {
+	var processedFiles int
+
 	return filepath.WalkDir(s.config.ScanPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			s.logger.Warn("Error accessing path", zap.String("path", path), zap.Error(err))
@@ -393,6 +395,14 @@ func (s *Scanner) walkDirectory(ctx context.Context, jobs chan<- *FileJob, resul
 				return filepath.SkipDir
 			}
 			return nil
+		}
+
+		// Check file limit (0 = unlimited)
+		if s.config.MaxFiles > 0 && processedFiles >= s.config.MaxFiles {
+			s.logger.Info("Reached maximum file limit, stopping scan",
+				zap.Int("max_files", s.config.MaxFiles),
+				zap.Int("processed", processedFiles))
+			return filepath.SkipAll
 		}
 
 		// Check if file should be processed
@@ -434,6 +444,7 @@ func (s *Scanner) walkDirectory(ctx context.Context, jobs chan<- *FileJob, resul
 		case jobs <- job:
 			result.ScannedFiles = append(result.ScannedFiles, path)
 			result.Statistics.FilesScanned++
+			processedFiles++
 		case <-ctx.Done():
 			return ctx.Err()
 		}

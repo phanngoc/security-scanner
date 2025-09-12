@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/le-company/security-scanner/internal/cache"
+	"github.com/le-company/security-scanner/internal/config"
 	"github.com/le-company/security-scanner/internal/lsp"
 	"github.com/le-company/security-scanner/internal/rules"
 	"go.uber.org/zap"
@@ -278,17 +280,26 @@ func (p *PHPParser) GetSupportedExtensions() []string {
 type ParserRegistry struct {
 	parsers       map[string]Parser
 	lspClients    map[string]*lsp.LSPClient
+	cache         *cache.SymbolTableCache
 	logger        *zap.Logger
 	workspaceRoot string
 }
 
 // NewParserRegistry creates a new parser registry
-func NewParserRegistry(workspaceRoot string, logger *zap.Logger) *ParserRegistry {
+func NewParserRegistry(workspaceRoot string, cfg *config.Config, logger *zap.Logger) *ParserRegistry {
 	registry := &ParserRegistry{
 		parsers:       make(map[string]Parser),
 		lspClients:    make(map[string]*lsp.LSPClient),
 		logger:        logger,
 		workspaceRoot: workspaceRoot,
+	}
+
+	// Initialize cache
+	cacheDir := filepath.Join(workspaceRoot, ".cache")
+	if symbolCache, err := cache.NewSymbolTableCache(cacheDir, logger); err != nil {
+		logger.Warn("Failed to initialize symbol table cache", zap.Error(err))
+	} else {
+		registry.cache = symbolCache
 	}
 
 	// Register default parsers
@@ -456,23 +467,45 @@ func (pr *ParserRegistry) convertBasicToEnhanced(basic *SymbolTable, enhanced *l
 func (pr *ParserRegistry) AnalyzeFile(filePath string) ([]*rules.SecurityFinding, error) {
 	language := pr.detectLanguage(filePath)
 
-	// Read file content
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
+	var symbolTable *lsp.SymbolTable
+
+	// Try to get from cache first
+	if pr.cache != nil {
+		if cachedTable, found := pr.cache.Get(filePath); found {
+			pr.logger.Debug("Using cached symbol table", zap.String("file", filePath))
+			symbolTable = cachedTable
+		}
 	}
 
-	// Try LSP-based analysis first
-	symbolTable, err := pr.ParseWithLSP(filePath, content, language)
-	if err != nil {
-		pr.logger.Warn("LSP analysis failed, falling back to basic parser",
-			zap.String("file", filePath),
-			zap.Error(err))
-
-		// Fallback to basic parser
-		symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
+	// If not cached, build symbol table
+	if symbolTable == nil {
+		// Read file content
+		content, err := os.ReadFile(filePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse file: %w", err)
+			return nil, fmt.Errorf("failed to read file: %w", err)
+		}
+
+		// Try LSP-based analysis first
+		symbolTable, err = pr.ParseWithLSP(filePath, content, language)
+		if err != nil {
+			pr.logger.Warn("LSP analysis failed, falling back to basic parser",
+				zap.String("file", filePath),
+				zap.Error(err))
+
+			// Fallback to basic parser
+			symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse file: %w", err)
+			}
+		}
+
+		// Cache the newly built symbol table
+		if pr.cache != nil && symbolTable != nil {
+			if err := pr.cache.Set(filePath, symbolTable); err != nil {
+				pr.logger.Warn("Failed to cache symbol table",
+					zap.String("file", filePath),
+					zap.Error(err))
+			}
 		}
 	}
 
@@ -482,13 +515,8 @@ func (pr *ParserRegistry) AnalyzeFile(filePath string) ([]*rules.SecurityFinding
 	// Analyze using symbol table
 	findings := analyzer.AnalyzeSymbolTable(symbolTable)
 
-	// Convert to expected format (findings are already in correct format)
-	var securityFindings []*rules.SecurityFinding
-	for _, finding := range findings {
-		securityFindings = append(securityFindings, finding)
-	}
-
-	return securityFindings, nil
+	// Return findings directly (they are already in correct format)
+	return findings, nil
 }
 
 // detectLanguage detects the programming language from file extension
@@ -518,16 +546,6 @@ func (pr *ParserRegistry) detectLanguage(filePath string) string {
 	default:
 		return "unknown"
 	}
-}
-
-// getParser returns the appropriate parser for a language
-func (pr *ParserRegistry) getParser(language string) Parser {
-	for _, parser := range pr.parsers {
-		if parser.GetLanguage() == language {
-			return parser
-		}
-	}
-	return nil
 }
 
 // Close closes all LSP clients

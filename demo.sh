@@ -52,10 +52,14 @@ echo "Scanning with 4 workers:"
 time ./bin/security-scanner --parallel 4 examples/ > /dev/null
 echo
 
-# Demo 7: Configuration file
-echo "=== Demo 7: Configuration File ==="
-echo "Using custom configuration:"
-./bin/security-scanner --config .security-scanner.yaml examples/
+# Demo 7: Cache functionality
+echo "=== Demo 7: Cache Functionality ==="
+echo "Scanning with cache enabled (default):"
+time ./bin/security-scanner examples/ > /dev/null
+echo "Second scan (using cache):"
+time ./bin/security-scanner examples/ > /dev/null
+echo "Cache directory contents:"
+ls -la .cache/ || echo "No cache directory yet"
 echo
 
 # Demo 8: Self scan

@@ -16,7 +16,19 @@ type Config struct {
 	Verbose      bool
 	AllowedDirs  []string
 	ExcludedDirs []string
+	Cache        CacheConfig
 	Rules        RulesConfig
+	MaxFiles     int  // Maximum number of files to process (0 = unlimited)
+	NoLsp        bool // Disable LSP integration
+}
+
+// CacheConfig holds cache configuration
+type CacheConfig struct {
+	Enabled   bool   `mapstructure:"enabled"`
+	Directory string `mapstructure:"directory"`
+	MaxSize   int64  `mapstructure:"max_size"`  // in bytes
+	MaxAge    int    `mapstructure:"max_age"`   // in hours
+	MaxFiles  int    `mapstructure:"max_files"` // Maximum files to cache (0 = unlimited)
 }
 
 // RulesConfig holds security rules configuration
@@ -36,6 +48,14 @@ func Load() *Config {
 		Format:   "text",
 		Severity: "medium",
 		Parallel: runtime.NumCPU(),
+		MaxFiles: 0, // Default: unlimited
+		Cache: CacheConfig{
+			Enabled:   true,
+			Directory: ".cache",
+			MaxSize:   1024 * 1024 * 1024, // 1GB
+			MaxAge:    168,                // 7 days in hours
+			MaxFiles:  0,                  // Default: unlimited
+		},
 		Rules: RulesConfig{
 			Enabled: []string{
 				"sql_injection",

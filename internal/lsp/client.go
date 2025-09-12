@@ -160,28 +160,41 @@ func NewLSPClient(language, workspaceRoot string, logger *zap.Logger) (*LSPClien
 
 // startLanguageServer starts the appropriate language server
 func (c *LSPClient) startLanguageServer() error {
+	var serverCmd string
 	var args []string
 
 	switch c.language {
 	case "go":
 		// Use gopls (Go language server)
-		c.cmd = exec.CommandContext(c.ctx, "gopls", "serve")
+		serverCmd = "gopls"
+		args = []string{"serve"}
 	case "php":
-		// Use Intelephense or similar PHP language server
-		c.cmd = exec.CommandContext(c.ctx, "intelephense", "--stdio")
+		// Use Intelephense PHP language server
+		serverCmd = "intelephense"
+		args = []string{"--stdio"}
 	case "javascript", "typescript":
 		// Use TypeScript language server
-		c.cmd = exec.CommandContext(c.ctx, "typescript-language-server", "--stdio")
+		serverCmd = "typescript-language-server"
+		args = []string{"--stdio"}
 	case "python":
 		// Use Pylsp or Pyright
-		c.cmd = exec.CommandContext(c.ctx, "pylsp")
+		serverCmd = "pylsp"
+		args = []string{}
 	default:
 		return fmt.Errorf("unsupported language: %s", c.language)
 	}
 
-	if len(args) > 0 {
-		c.cmd.Args = append(c.cmd.Args, args...)
+	// Check if the language server is available
+	if _, err := exec.LookPath(serverCmd); err != nil {
+		return fmt.Errorf("language server '%s' not found in PATH. Please install it first", serverCmd)
 	}
+
+	c.cmd = exec.CommandContext(c.ctx, serverCmd, args...)
+	
+	c.logger.Info("Starting language server",
+		zap.String("language", c.language),
+		zap.String("command", serverCmd),
+		zap.Strings("args", args))
 
 	var err error
 	c.stdin, err = c.cmd.StdinPipe()
@@ -243,17 +256,36 @@ func (c *LSPClient) initialize() error {
 		},
 	}
 
-	resp, err := c.sendRequest("initialize", params)
-	if err != nil {
-		return fmt.Errorf("initialize request failed: %w", err)
-	}
+	// Add initialization timeout
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
 
-	if resp.Error != nil {
-		return fmt.Errorf("initialize error: %s", resp.Error.Message)
-	}
+	// Create a channel to handle the initialization
+	initDone := make(chan error, 1)
 
-	// Send initialized notification
-	return c.sendNotification("initialized", map[string]interface{}{})
+	go func() {
+		resp, err := c.sendRequest("initialize", params)
+		if err != nil {
+			initDone <- fmt.Errorf("initialize request failed: %w", err)
+			return
+		}
+
+		if resp.Error != nil {
+			initDone <- fmt.Errorf("initialize error: %s", resp.Error.Message)
+			return
+		}
+
+		// Send initialized notification
+		err = c.sendNotification("initialized", map[string]interface{}{})
+		initDone <- err
+	}()
+
+	select {
+	case err := <-initDone:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("LSP initialization timeout after 10 seconds")
+	}
 }
 
 // sendRequest sends a request and waits for response
