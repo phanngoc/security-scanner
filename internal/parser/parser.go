@@ -426,6 +426,11 @@ func (pr *ParserRegistry) GetSupportedExtensions() []string {
 
 // GetOrCreateLSPClient gets or creates an LSP client for a language
 func (pr *ParserRegistry) GetOrCreateLSPClient(language string) (*lsp.LSPClient, error) {
+	// Check if LSP is disabled in config first
+	if pr.config != nil && pr.config.NoLsp {
+		return nil, fmt.Errorf("LSP is disabled in configuration")
+	}
+	
 	if client, exists := pr.lspClients[language]; exists {
 		return client, nil
 	}

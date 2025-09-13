@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/le-company/security-scanner/internal/lsp"
@@ -19,6 +20,7 @@ type SymbolTableCache struct {
 	logger   *zap.Logger
 	maxSize  int64 // Maximum cache size in bytes
 	maxAge   time.Duration
+	metadataMu sync.Mutex // Protects metadata operations
 }
 
 // CacheEntry represents a cached symbol table entry
@@ -402,28 +404,46 @@ func (c *SymbolTableCache) saveCacheEntry(cachePath string, entry *CacheEntry) e
 func (c *SymbolTableCache) loadMetadata() (*CacheMetadata, error) {
 	metadataPath := filepath.Join(c.cacheDir, MetadataFileName)
 
-	data, err := os.ReadFile(metadataPath)
-	if err != nil {
-		return nil, err
+	// Retry logic to handle temporary read failures during concurrent writes
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		data, err := os.ReadFile(metadataPath)
+		if err != nil {
+			return nil, err
+		}
+
+		var metadata CacheMetadata
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			if attempt < maxRetries-1 {
+				// Wait a bit and retry if JSON parsing fails (likely due to concurrent write)
+				time.Sleep(time.Millisecond * 50)
+				continue
+			}
+			return nil, err
+		}
+
+		return &metadata, nil
 	}
 
-	var metadata CacheMetadata
-	if err := json.Unmarshal(data, &metadata); err != nil {
-		return nil, err
-	}
-
-	return &metadata, nil
+	return nil, fmt.Errorf("failed to load metadata after %d attempts", maxRetries)
 }
 
 func (c *SymbolTableCache) saveMetadata(metadata *CacheMetadata) error {
 	metadataPath := filepath.Join(c.cacheDir, MetadataFileName)
+	tempPath := metadataPath + ".tmp"
 
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(metadataPath, data, 0644)
+	// Write to temporary file first
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return err
+	}
+
+	// Atomic rename - this prevents corruption during concurrent access
+	return os.Rename(tempPath, metadataPath)
 }
 
 func (c *SymbolTableCache) initializeMetadata() {
@@ -437,6 +457,9 @@ func (c *SymbolTableCache) initializeMetadata() {
 }
 
 func (c *SymbolTableCache) updateMetadata(filePath string, entry *CacheEntry, cachePath string) {
+	c.metadataMu.Lock()
+	defer c.metadataMu.Unlock()
+	
 	metadata, err := c.loadMetadata()
 	if err != nil {
 		c.logger.Warn("Failed to load metadata for update", zap.Error(err))
@@ -470,6 +493,9 @@ func (c *SymbolTableCache) updateMetadata(filePath string, entry *CacheEntry, ca
 }
 
 func (c *SymbolTableCache) removeFromMetadata(filePath string) {
+	c.metadataMu.Lock()
+	defer c.metadataMu.Unlock()
+	
 	metadata, err := c.loadMetadata()
 	if err != nil {
 		c.logger.Warn("Failed to load metadata for removal", zap.Error(err))
