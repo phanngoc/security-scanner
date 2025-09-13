@@ -80,32 +80,32 @@ function test( {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ast, stats, err := parser.Parse([]byte(tt.phpCode), "test.php")
-			
+
 			if (err != nil) != tt.wantErr {
 				t.Errorf("SimplePHPASTParser.Parse() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if !tt.wantErr {
 				if ast == nil {
 					t.Error("Expected AST but got nil")
 					return
 				}
-				
+
 				if stats == nil {
 					t.Error("Expected stats but got nil")
 					return
 				}
-				
+
 				if !tt.checkAST(ast) {
 					t.Error("AST validation failed")
 				}
-				
+
 				// Verify stats
 				if stats.Language != "php" {
 					t.Errorf("Expected language 'php', got %s", stats.Language)
 				}
-				
+
 				if stats.NodesCreated == 0 && !tt.wantErr {
 					t.Error("Expected nodes to be created")
 				}
@@ -134,35 +134,35 @@ $global_var = "test";
 
 	parser := NewSimplePHPASTParser()
 	ast, _, err := parser.Parse([]byte(phpCode), "test.php")
-	
+
 	if err != nil {
 		t.Fatalf("Failed to parse PHP code: %v", err)
 	}
-	
+
 	symbolTable, err := parser.BuildSymbolTable(ast)
 	if err != nil {
 		t.Fatalf("Failed to build symbol table: %v", err)
 	}
-	
+
 	// Check if symbol table was created
 	if symbolTable == nil {
 		t.Fatal("Symbol table is nil")
 	}
-	
+
 	// Check if symbols were extracted
 	if len(symbolTable.Functions) == 0 {
 		t.Error("No functions found in symbol table")
 	}
-	
+
 	if len(symbolTable.Classes) == 0 {
 		t.Error("No classes found in symbol table")
 	}
-	
+
 	// Verify specific symbols
 	if _, exists := symbolTable.Functions["globalFunction"]; !exists {
 		t.Error("Global function not found in symbol table")
 	}
-	
+
 	if _, exists := symbolTable.Classes["TestClass"]; !exists {
 		t.Error("Test class not found in symbol table")
 	}
@@ -189,49 +189,49 @@ $api_key = "secret_key_12345678901234567890";
 
 	parser := NewSimplePHPASTParser()
 	ast, _, err := parser.Parse([]byte(vulnerableCode), "vulnerable.php")
-	
+
 	if err != nil {
 		t.Fatalf("Failed to parse vulnerable code: %v", err)
 	}
-	
+
 	symbolTable, err := parser.BuildSymbolTable(ast)
 	if err != nil {
 		t.Fatalf("Failed to build symbol table: %v", err)
 	}
-	
+
 	// Mark variables as tainted (simulate user input detection)
 	if userIdVar, exists := symbolTable.Variables["user_id"]; exists {
 		userIdVar.IsTainted = true
 		userIdVar.TaintSources = []string{"_GET"}
 	}
-	
+
 	if userInputVar, exists := symbolTable.Variables["user_input"]; exists {
 		userInputVar.IsTainted = true
 		userInputVar.TaintSources = []string{"_POST"}
 	}
-	
+
 	if filenameVar, exists := symbolTable.Variables["filename"]; exists {
 		filenameVar.IsTainted = true
 		filenameVar.TaintSources = []string{"_GET"}
 	}
-	
+
 	ruleEngine := NewSecurityRuleEngine()
 	findings, err := ruleEngine.AnalyzeAST(ast, symbolTable)
-	
+
 	if err != nil {
 		t.Fatalf("Security analysis failed: %v", err)
 	}
-	
+
 	if len(findings) == 0 {
 		t.Error("Expected security findings but got none")
 	}
-	
+
 	// Check for specific vulnerability types
 	foundSQL := false
 	foundXSS := false
 	foundCmd := false
 	foundSecret := false
-	
+
 	for _, finding := range findings {
 		switch {
 		case finding.RuleID == "SQL-001" || finding.RuleID == "SQL-002":
@@ -244,23 +244,23 @@ $api_key = "secret_key_12345678901234567890";
 			foundSecret = true
 		}
 	}
-	
+
 	if !foundSQL {
 		t.Error("Expected SQL injection finding")
 	}
-	
+
 	if !foundXSS {
 		t.Error("Expected XSS finding")
 	}
-	
+
 	if !foundCmd {
 		t.Error("Expected command injection finding")
 	}
-	
+
 	if !foundSecret {
 		t.Error("Expected hardcoded secret finding")
 	}
-	
+
 	t.Logf("Found %d security findings:", len(findings))
 	for _, finding := range findings {
 		t.Logf("- %s: %s (Severity: %v)", finding.RuleID, finding.Message, finding.Severity)
@@ -285,37 +285,37 @@ echo $result;
 ?>`
 
 	integration := NewParserIntegration(nil) // Using nil logger for test
-	
+
 	result, err := integration.ParseAndAnalyze("test.php", []byte(phpCode))
 	if err != nil {
 		t.Fatalf("Integration analysis failed: %v", err)
 	}
-	
+
 	if result == nil {
 		t.Fatal("Expected analysis result but got nil")
 	}
-	
+
 	// Check result properties
 	if result.Language != "php" {
 		t.Errorf("Expected language 'php', got %s", result.Language)
 	}
-	
+
 	if result.AST == nil {
 		t.Error("Expected AST but got nil")
 	}
-	
+
 	if result.SymbolTable == nil {
 		t.Error("Expected symbol table but got nil")
 	}
-	
+
 	if result.Metrics == nil {
 		t.Error("Expected metrics but got nil")
 	}
-	
+
 	if len(result.Findings) == 0 {
 		t.Error("Expected security findings but got none")
 	}
-	
+
 	// Test helper methods
 	if !result.HasHighSeverityFindings() && len(result.Findings) > 0 {
 		// Check if there are any high severity findings
@@ -330,12 +330,12 @@ echo $result;
 			t.Error("HasHighSeverityFindings() returned false but high severity findings exist")
 		}
 	}
-	
+
 	findingsBySeverity := result.GetFindingsBySeverity()
 	if len(findingsBySeverity) == 0 && len(result.Findings) > 0 {
 		t.Error("GetFindingsBySeverity() returned empty map but findings exist")
 	}
-	
+
 	findingsByRule := result.GetFindingsByRule()
 	if len(findingsByRule) == 0 && len(result.Findings) > 0 {
 		t.Error("GetFindingsByRule() returned empty map but findings exist")
@@ -351,24 +351,24 @@ echo $processed;
 
 	parser := NewSimplePHPASTParser()
 	ast, _, err := parser.Parse([]byte(phpCode), "taint_test.php")
-	
+
 	if err != nil {
 		t.Fatalf("Failed to parse code for taint analysis: %v", err)
 	}
-	
+
 	symbolTable, err := parser.BuildSymbolTable(ast)
 	if err != nil {
 		t.Fatalf("Failed to build symbol table: %v", err)
 	}
-	
+
 	analyzer := NewTaintAnalyzer(symbolTable)
 	paths := analyzer.PerformTaintAnalysis(ast)
-	
+
 	// We expect at least one taint path from $_GET to echo
 	if len(paths) == 0 {
 		t.Error("Expected taint paths but got none")
 	}
-	
+
 	// Verify taint propagation
 	if userInputVar, exists := symbolTable.Variables["user_input"]; exists {
 		if !userInputVar.IsTainted {
@@ -403,7 +403,7 @@ $var5 = "value5";
 ?>`
 
 	parser := NewSimplePHPASTParser()
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, err := parser.Parse([]byte(phpCode), "benchmark.php")
@@ -427,19 +427,19 @@ $secret = "api_key_1234567890123456";
 	if err != nil {
 		b.Fatalf("Parse failed: %v", err)
 	}
-	
+
 	symbolTable, err := parser.BuildSymbolTable(ast)
 	if err != nil {
 		b.Fatalf("Symbol table building failed: %v", err)
 	}
-	
+
 	// Mark data as tainted
 	if dataVar, exists := symbolTable.Variables["data"]; exists {
 		dataVar.IsTainted = true
 	}
-	
+
 	ruleEngine := NewSecurityRuleEngine()
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := ruleEngine.AnalyzeAST(ast, symbolTable)

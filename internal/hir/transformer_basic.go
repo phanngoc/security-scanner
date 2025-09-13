@@ -109,8 +109,8 @@ func (t *BasicTransformer) createBasicBlock() *HIRBlock {
 		Operands: make([]HIRValue, 0),
 		Position: token.Pos(2),
 		Meta: map[string]interface{}{
-			"function": "mysqli_query",
-			"args":     []string{"$connection", "$userInput"},
+			"function":      "mysqli_query",
+			"args":          []string{"$connection", "$userInput"},
 			"security_risk": "SQL Injection",
 		},
 	}

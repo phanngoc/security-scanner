@@ -259,14 +259,14 @@ func (p *PHPParser) Parse(filePath string, content []byte) (*SymbolTable, error)
 		Language:  "php",
 		FilePath:  filePath,
 	}
-	
+
 	// Basic regex-based parsing for functions and classes
 	contentStr := string(content)
-	
+
 	// Extract functions using regex
 	funcRegex := regexp.MustCompile(`(?m)^\s*(?:public|private|protected|static|\s)*\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)`)
 	funcMatches := funcRegex.FindAllStringSubmatch(contentStr, -1)
-	
+
 	for _, match := range funcMatches {
 		if len(match) >= 2 {
 			funcName := match[1]
@@ -274,14 +274,14 @@ func (p *PHPParser) Parse(filePath string, content []byte) (*SymbolTable, error)
 			if len(match) >= 3 {
 				paramStr = match[2]
 			}
-			
+
 			funcInfo := &FunctionInfo{
 				Name:       funcName,
 				Parameters: []Parameter{},
 				StartPos:   0, // Would need proper parsing for positions
 				EndPos:     0,
 			}
-			
+
 			// Basic parameter parsing
 			if paramStr != "" {
 				params := strings.Split(paramStr, ",")
@@ -292,9 +292,7 @@ func (p *PHPParser) Parse(filePath string, content []byte) (*SymbolTable, error)
 						parts := strings.Fields(param)
 						if len(parts) > 0 {
 							paramName := parts[len(parts)-1]
-							if strings.HasPrefix(paramName, "$") {
-								paramName = paramName[1:] // Remove $ prefix
-							}
+							paramName = strings.TrimPrefix(paramName, "$") // Remove $ prefix
 							funcInfo.Parameters = append(funcInfo.Parameters, Parameter{
 								Name: paramName,
 								Type: "mixed", // PHP is dynamically typed
@@ -303,15 +301,15 @@ func (p *PHPParser) Parse(filePath string, content []byte) (*SymbolTable, error)
 					}
 				}
 			}
-			
+
 			symbolTable.Functions[funcName] = funcInfo
 		}
 	}
-	
+
 	// Extract class variables
 	varRegex := regexp.MustCompile(`(?m)^\s*(?:public|private|protected|static|\s)*\s*\$([a-zA-Z_][a-zA-Z0-9_]*)\s*[=;]`)
 	varMatches := varRegex.FindAllStringSubmatch(contentStr, -1)
-	
+
 	for _, match := range varMatches {
 		if len(match) >= 2 {
 			varName := match[1]
@@ -324,11 +322,11 @@ func (p *PHPParser) Parse(filePath string, content []byte) (*SymbolTable, error)
 			}
 		}
 	}
-	
+
 	// Extract use statements (imports)
 	useRegex := regexp.MustCompile(`(?m)^\s*use\s+([a-zA-Z0-9_\\]+)(?:\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*))?\s*;`)
 	useMatches := useRegex.FindAllStringSubmatch(contentStr, -1)
-	
+
 	for _, match := range useMatches {
 		if len(match) >= 2 {
 			fullName := match[1]
@@ -343,7 +341,7 @@ func (p *PHPParser) Parse(filePath string, content []byte) (*SymbolTable, error)
 			symbolTable.Imports[alias] = fullName
 		}
 	}
-	
+
 	return symbolTable, nil
 }
 
@@ -359,22 +357,24 @@ func (p *PHPParser) GetSupportedExtensions() []string {
 
 // ParserRegistry manages language parsers
 type ParserRegistry struct {
-	parsers       map[string]Parser
-	lspClients    map[string]*lsp.LSPClient
-	cache         *cache.SymbolTableCache
-	config        *config.Config
-	logger        *zap.Logger
-	workspaceRoot string
+	parsers        map[string]Parser
+	lspClients     map[string]*lsp.LSPClient
+	internalEngine *lsp.InternalEngine
+	cache          *cache.SymbolTableCache
+	config         *config.Config
+	logger         *zap.Logger
+	workspaceRoot  string
 }
 
 // NewParserRegistry creates a new parser registry
 func NewParserRegistry(workspaceRoot string, cfg *config.Config, logger *zap.Logger) *ParserRegistry {
 	registry := &ParserRegistry{
-		parsers:       make(map[string]Parser),
-		lspClients:    make(map[string]*lsp.LSPClient),
-		config:        cfg,
-		logger:        logger,
-		workspaceRoot: workspaceRoot,
+		parsers:        make(map[string]Parser),
+		lspClients:     make(map[string]*lsp.LSPClient),
+		internalEngine: lsp.NewInternalEngine(logger),
+		config:         cfg,
+		logger:         logger,
+		workspaceRoot:  workspaceRoot,
 	}
 
 	// Initialize cache using configured directory
@@ -387,7 +387,7 @@ func NewParserRegistry(workspaceRoot string, cfg *config.Config, logger *zap.Log
 	} else {
 		cacheDir = filepath.Join(workspaceRoot, ".cache")
 	}
-	
+
 	if cfg.Cache.Enabled {
 		if symbolCache, err := cache.NewSymbolTableCache(cacheDir, logger); err != nil {
 			logger.Warn("Failed to initialize symbol table cache", zap.Error(err))
@@ -430,7 +430,7 @@ func (pr *ParserRegistry) GetOrCreateLSPClient(language string) (*lsp.LSPClient,
 	if pr.config != nil && pr.config.NoLsp {
 		return nil, fmt.Errorf("LSP is disabled in configuration")
 	}
-	
+
 	if client, exists := pr.lspClients[language]; exists {
 		return client, nil
 	}
@@ -444,21 +444,30 @@ func (pr *ParserRegistry) GetOrCreateLSPClient(language string) (*lsp.LSPClient,
 	return client, nil
 }
 
+// ParseWithInternalEngine parses a file using the internal LSP engine
+func (pr *ParserRegistry) ParseWithInternalEngine(filePath string, content []byte, language string) (*lsp.SymbolTable, error) {
+	pr.logger.Debug("Using internal LSP engine for parsing",
+		zap.String("language", language),
+		zap.String("file", filePath))
+
+	return pr.internalEngine.ParseFile(filePath, content, language)
+}
+
 // ParseWithLSP parses a file using LSP for enhanced symbol information
 func (pr *ParserRegistry) ParseWithLSP(filePath string, content []byte, language string) (*lsp.SymbolTable, error) {
-	// Check if LSP is disabled in config
+	// Check if LSP is disabled in config - use internal engine by default
 	if pr.config != nil && pr.config.NoLsp {
-		pr.logger.Debug("LSP disabled in configuration, using basic parsing",
+		pr.logger.Debug("LSP disabled in configuration, using internal engine",
 			zap.String("language", language))
-		return pr.parseWithoutLSP(filePath, content, language)
+		return pr.ParseWithInternalEngine(filePath, content, language)
 	}
-	
+
 	client, err := pr.GetOrCreateLSPClient(language)
 	if err != nil {
-		pr.logger.Warn("LSP client unavailable, falling back to basic parsing",
+		pr.logger.Warn("LSP client unavailable, falling back to internal engine",
 			zap.String("language", language),
 			zap.Error(err))
-		return pr.parseWithoutLSP(filePath, content, language)
+		return pr.ParseWithInternalEngine(filePath, content, language)
 	}
 
 	// Create file URI
@@ -467,32 +476,32 @@ func (pr *ParserRegistry) ParseWithLSP(filePath string, content []byte, language
 	// Open document in LSP
 	err = client.OpenDocument(uri, language, string(content), 1)
 	if err != nil {
-		pr.logger.Warn("Failed to open document in LSP",
+		pr.logger.Warn("Failed to open document in LSP, using internal engine",
 			zap.String("uri", uri),
 			zap.Error(err))
-		return pr.parseWithoutLSP(filePath, content, language)
+		return pr.ParseWithInternalEngine(filePath, content, language)
 	}
 
 	// Get document symbols
 	symbols, err := client.GetDocumentSymbols(uri)
 	if err != nil {
-		pr.logger.Warn("Failed to get document symbols",
+		pr.logger.Warn("Failed to get document symbols, using internal engine",
 			zap.String("uri", uri),
 			zap.Error(err))
 		// Close document and fallback
 		client.CloseDocument(uri)
-		return pr.parseWithoutLSP(filePath, content, language)
+		return pr.ParseWithInternalEngine(filePath, content, language)
 	}
 
 	// Build enhanced symbol table
 	symbolTable := lsp.NewSymbolTable(uri, language, pr.logger)
 	err = symbolTable.BuildFromLSPSymbols(symbols, string(content))
 	if err != nil {
-		pr.logger.Error("Failed to build symbol table",
+		pr.logger.Error("Failed to build symbol table, using internal engine",
 			zap.String("uri", uri),
 			zap.Error(err))
 		client.CloseDocument(uri)
-		return pr.parseWithoutLSP(filePath, content, language)
+		return pr.ParseWithInternalEngine(filePath, content, language)
 	}
 
 	// Close document (we've extracted what we need)
@@ -591,18 +600,32 @@ func (pr *ParserRegistry) AnalyzeFile(filePath string) ([]*rules.SecurityFinding
 			return nil, fmt.Errorf("failed to read file: %w", err)
 		}
 
-		// Try LSP-based analysis first
-		symbolTable, err = pr.ParseWithLSP(filePath, content, language)
+		// Use internal engine as default, external LSP as fallback
+		symbolTable, err = pr.ParseWithInternalEngine(filePath, content, language)
 		if err != nil {
-			pr.logger.Warn("LSP analysis failed, falling back to basic parser",
+			pr.logger.Warn("Internal engine parsing failed, trying external LSP",
 				zap.String("file", filePath),
 				zap.Error(err))
 
-			// Fallback to basic parser
-			symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse file: %w", err)
+			// Fallback to external LSP if available and not disabled
+			if pr.config == nil || !pr.config.NoLsp {
+				symbolTable, err = pr.ParseWithLSP(filePath, content, language)
+				if err != nil {
+					pr.logger.Warn("External LSP analysis also failed, using basic parser",
+						zap.String("file", filePath),
+						zap.Error(err))
+
+					// Final fallback to basic parser
+					symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
+				}
+			} else {
+				// LSP disabled, use basic parser as final fallback
+				symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
 			}
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse file: %w", err)
 		}
 
 		// Cache the newly built symbol table
@@ -644,18 +667,33 @@ func (pr *ParserRegistry) GetSymbolTable(filePath string) (*lsp.SymbolTable, err
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	// Try LSP-based analysis first
-	symbolTable, err := pr.ParseWithLSP(filePath, content, language)
+	// Use internal engine as default, external LSP as fallback
+	var symbolTable *lsp.SymbolTable
+	symbolTable, err = pr.ParseWithInternalEngine(filePath, content, language)
 	if err != nil {
-		pr.logger.Warn("LSP analysis failed, falling back to basic parser",
+		pr.logger.Warn("Internal engine parsing failed, trying external LSP",
 			zap.String("file", filePath),
 			zap.Error(err))
 
-		// Fallback to basic parser
-		symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse file: %w", err)
+		// Fallback to external LSP if available and not disabled
+		if pr.config == nil || !pr.config.NoLsp {
+			symbolTable, err = pr.ParseWithLSP(filePath, content, language)
+			if err != nil {
+				pr.logger.Warn("External LSP analysis also failed, using basic parser",
+					zap.String("file", filePath),
+					zap.Error(err))
+
+				// Final fallback to basic parser
+				symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
+			}
+		} else {
+			// LSP disabled, use basic parser as final fallback
+			symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
 		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse file: %w", err)
 	}
 
 	// Cache the newly built symbol table

@@ -383,8 +383,7 @@ func (sba *SymbolBasedAnalyzer) addSymbolRule(rule *SymbolBasedRule) {
 func (sba *SymbolBasedAnalyzer) ruleAppliesToSymbol(symbol *lsp.ScopeNode, rule *SymbolBasedRule) bool {
 	// Check if rule applies to the symbol's language or is universal
 	return len(rule.Languages) == 0 ||
-		contains(rule.Languages, "*") ||
-		contains(rule.Languages, strings.ToLower(string(symbol.Kind)))
+		contains(rule.Languages, "*")
 }
 
 func (sba *SymbolBasedAnalyzer) symbolMatchesPattern(symbol *lsp.ScopeNode, matcher SymbolMatcher) bool {
@@ -480,7 +479,7 @@ func (sba *SymbolBasedAnalyzer) extractSymbolContext(symbol *lsp.ScopeNode, symb
 	var context []string
 
 	// Add symbol information
-	context = append(context, fmt.Sprintf("Symbol: %s (%s)", symbol.Name, symbol.Kind))
+	context = append(context, fmt.Sprintf("Symbol: %s (%d)", symbol.Name, int(symbol.Kind)))
 	context = append(context, fmt.Sprintf("Path: %s", symbol.NamePath))
 
 	if symbol.Detail != "" {

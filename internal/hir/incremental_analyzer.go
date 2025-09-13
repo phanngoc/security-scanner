@@ -16,11 +16,11 @@ type IncrementalAnalyzer struct {
 	linker    *SymbolLinker
 	program   *HIRProgram
 	logger    *zap.Logger
-	
+
 	// Configuration
-	maxDependencyDepth int
+	maxDependencyDepth  int
 	enableTaintAnalysis bool
-	enableCallGraph    bool
+	enableCallGraph     bool
 }
 
 // NewIncrementalAnalyzer creates a new incremental analyzer
@@ -35,51 +35,51 @@ func NewIncrementalAnalyzer(workspacePath string, logger *zap.Logger) (*Incremen
 
 	return &IncrementalAnalyzer{
 		workspace:           workspace,
-		linker:             linker,
-		program:            program,
-		logger:             logger,
-		maxDependencyDepth: 3,  // Default max dependency depth
+		linker:              linker,
+		program:             program,
+		logger:              logger,
+		maxDependencyDepth:  3, // Default max dependency depth
 		enableTaintAnalysis: true,
-		enableCallGraph:    true,
+		enableCallGraph:     true,
 	}, nil
 }
 
 // AnalysisRequest represents a request for incremental analysis
 type AnalysisRequest struct {
-	Files        []string    // Files to analyze
-	ChangedFiles []string    // Files that have changed
-	ForceRebuild bool        // Force full rebuild
-	MaxDepth     int         // Max dependency depth (0 = use default)
+	Files        []string // Files to analyze
+	ChangedFiles []string // Files that have changed
+	ForceRebuild bool     // Force full rebuild
+	MaxDepth     int      // Max dependency depth (0 = use default)
 }
 
 // AnalysisResponse represents the result of incremental analysis
 type AnalysisResponse struct {
-	ProcessedFiles  []string           // Files that were processed
-	AffectedFiles   []string           // Files affected by changes
-	SkippedFiles    []string           // Files skipped (up to date)
-	Findings        []*SecurityFinding // Security findings
-	Metrics         *AnalysisMetrics   // Analysis metrics
-	Duration        time.Duration      // Total analysis time
-	Errors          []error            // Analysis errors
+	ProcessedFiles []string           // Files that were processed
+	AffectedFiles  []string           // Files affected by changes
+	SkippedFiles   []string           // Files skipped (up to date)
+	Findings       []*SecurityFinding // Security findings
+	Metrics        *AnalysisMetrics   // Analysis metrics
+	Duration       time.Duration      // Total analysis time
+	Errors         []error            // Analysis errors
 }
 
 // AnalysisMetrics contains metrics about the analysis
 type AnalysisMetrics struct {
-	FilesScanned      int
-	FilesUpToDate     int
-	FilesRebuilt      int
-	SymbolsExtracted  int
-	CallGraphEdges    int
-	DependencyEdges   int
-	SecurityFindings  int
-	CacheHits         int
-	CacheMisses       int
+	FilesScanned     int
+	FilesUpToDate    int
+	FilesRebuilt     int
+	SymbolsExtracted int
+	CallGraphEdges   int
+	DependencyEdges  int
+	SecurityFindings int
+	CacheHits        int
+	CacheMisses      int
 }
 
 // AnalyzeIncremental performs incremental analysis
 func (ia *IncrementalAnalyzer) AnalyzeIncremental(request *AnalysisRequest) (*AnalysisResponse, error) {
 	startTime := time.Now()
-	
+
 	response := &AnalysisResponse{
 		ProcessedFiles: make([]string, 0),
 		AffectedFiles:  make([]string, 0),
@@ -118,8 +118,8 @@ func (ia *IncrementalAnalyzer) AnalyzeIncremental(request *AnalysisRequest) (*An
 	for _, filePath := range filesToProcess.NeedProcessing {
 		err := ia.processFile(filePath, response)
 		if err != nil {
-			ia.logger.Error("Failed to process file", 
-				zap.String("file", filePath), 
+			ia.logger.Error("Failed to process file",
+				zap.String("file", filePath),
 				zap.Error(err))
 			response.Errors = append(response.Errors, err)
 			continue
@@ -195,7 +195,7 @@ func (ia *IncrementalAnalyzer) determineFilesToProcess(request *AnalysisRequest,
 
 		if needsProcessing {
 			plan.NeedProcessing = append(plan.NeedProcessing, filePath)
-			
+
 			// Find dependent files
 			dependents, err := ia.findDependentFiles(filePath, maxDepth)
 			if err != nil {
@@ -204,7 +204,7 @@ func (ia *IncrementalAnalyzer) determineFilesToProcess(request *AnalysisRequest,
 					zap.Error(err))
 				continue
 			}
-			
+
 			for _, dep := range dependents {
 				affectedFiles[dep] = true
 			}
@@ -218,7 +218,7 @@ func (ia *IncrementalAnalyzer) determineFilesToProcess(request *AnalysisRequest,
 		if !contains(plan.NeedProcessing, changedFile) {
 			plan.NeedProcessing = append(plan.NeedProcessing, changedFile)
 		}
-		
+
 		// Find dependent files for changed files
 		dependents, err := ia.findDependentFiles(changedFile, maxDepth)
 		if err != nil {
@@ -227,7 +227,7 @@ func (ia *IncrementalAnalyzer) determineFilesToProcess(request *AnalysisRequest,
 				zap.Error(err))
 			continue
 		}
-		
+
 		for _, dep := range dependents {
 			affectedFiles[dep] = true
 		}
@@ -282,11 +282,11 @@ func (ia *IncrementalAnalyzer) findDependentFiles(filePath string, maxDepth int)
 	}
 
 	dependents := make([]string, 0, len(dependentIDs))
-	
+
 	// Convert IDs to file paths (this would need proper implementation)
 	// For now, return empty slice
 	// TODO: Implement proper ID to path conversion
-	
+
 	return dependents, nil
 }
 
@@ -538,20 +538,24 @@ func (r *SQLInjectionHIRRule) Check(file *HIRFile, program *HIRProgram) ([]*Secu
 
 type XSSHIRRule struct{}
 
-func NewXSSHIRRule() *XSSHIRRule                                                       { return &XSSHIRRule{} }
-func (r *XSSHIRRule) ID() string                                                      { return "XSS-HIR-001" }
-func (r *XSSHIRRule) Name() string                                                    { return "XSS (HIR)" }
-func (r *XSSHIRRule) Description() string                                             { return "Detects XSS via HIR analysis" }
-func (r *XSSHIRRule) Severity() Severity                                              { return SeverityHigh }
-func (r *XSSHIRRule) Check(file *HIRFile, program *HIRProgram) ([]*SecurityFinding, error) { return []*SecurityFinding{}, nil }
+func NewXSSHIRRule() *XSSHIRRule          { return &XSSHIRRule{} }
+func (r *XSSHIRRule) ID() string          { return "XSS-HIR-001" }
+func (r *XSSHIRRule) Name() string        { return "XSS (HIR)" }
+func (r *XSSHIRRule) Description() string { return "Detects XSS via HIR analysis" }
+func (r *XSSHIRRule) Severity() Severity  { return SeverityHigh }
+func (r *XSSHIRRule) Check(file *HIRFile, program *HIRProgram) ([]*SecurityFinding, error) {
+	return []*SecurityFinding{}, nil
+}
 
 type CommandInjectionHIRRule struct{}
 
 func NewCommandInjectionHIRRule() *CommandInjectionHIRRule { return &CommandInjectionHIRRule{} }
 func (r *CommandInjectionHIRRule) ID() string              { return "CMD-HIR-001" }
 func (r *CommandInjectionHIRRule) Name() string            { return "Command Injection (HIR)" }
-func (r *CommandInjectionHIRRule) Description() string     { return "Detects command injection via HIR analysis" }
-func (r *CommandInjectionHIRRule) Severity() Severity      { return SeverityCritical }
+func (r *CommandInjectionHIRRule) Description() string {
+	return "Detects command injection via HIR analysis"
+}
+func (r *CommandInjectionHIRRule) Severity() Severity { return SeverityCritical }
 func (r *CommandInjectionHIRRule) Check(file *HIRFile, program *HIRProgram) ([]*SecurityFinding, error) {
 	return []*SecurityFinding{}, nil
 }
@@ -572,8 +576,10 @@ type HardcodedSecretHIRRule struct{}
 func NewHardcodedSecretHIRRule() *HardcodedSecretHIRRule { return &HardcodedSecretHIRRule{} }
 func (r *HardcodedSecretHIRRule) ID() string             { return "SECRET-HIR-001" }
 func (r *HardcodedSecretHIRRule) Name() string           { return "Hardcoded Secret (HIR)" }
-func (r *HardcodedSecretHIRRule) Description() string    { return "Detects hardcoded secrets via HIR analysis" }
-func (r *HardcodedSecretHIRRule) Severity() Severity     { return SeverityHigh }
+func (r *HardcodedSecretHIRRule) Description() string {
+	return "Detects hardcoded secrets via HIR analysis"
+}
+func (r *HardcodedSecretHIRRule) Severity() Severity { return SeverityHigh }
 func (r *HardcodedSecretHIRRule) Check(file *HIRFile, program *HIRProgram) ([]*SecurityFinding, error) {
 	return []*SecurityFinding{}, nil
 }

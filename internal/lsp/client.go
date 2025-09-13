@@ -380,14 +380,14 @@ func (c *LSPClient) handleResponses() {
 			// Validate that content looks like JSON before parsing
 			contentStr := string(content)
 			contentStr = strings.TrimSpace(contentStr)
-			
+
 			// Skip empty or obviously non-JSON content
 			if len(contentStr) == 0 {
 				c.logger.Debug("Skipping empty LSP response")
 				contentLength = 0
 				continue
 			}
-			
+
 			// Check if content starts with JSON-like characters
 			if !strings.HasPrefix(contentStr, "{") && !strings.HasPrefix(contentStr, "[") {
 				prefix := contentStr
@@ -406,7 +406,7 @@ func (c *LSPClient) handleResponses() {
 				if len(debugContent) > 200 {
 					debugContent = debugContent[:200] + "..."
 				}
-				c.logger.Warn("Failed to unmarshal LSP response", 
+				c.logger.Warn("Failed to unmarshal LSP response",
 					zap.Error(err),
 					zap.String("content_preview", debugContent))
 				contentLength = 0

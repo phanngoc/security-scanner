@@ -142,8 +142,8 @@ func (cb *CFGBuilder) buildLoopCFG(stmt *HIRStmt, current, exit *CFGNode) *CFGNo
 	cb.addEdge(current, loopHeader, nil, CFGFallthrough)
 
 	// Loop condition
-	cb.addEdge(loopHeader, loopBody, nil, CFGTrue)    // Continue loop
-	cb.addEdge(loopHeader, loopExit, nil, CFGFalse)   // Exit loop
+	cb.addEdge(loopHeader, loopBody, nil, CFGTrue)  // Continue loop
+	cb.addEdge(loopHeader, loopExit, nil, CFGFalse) // Exit loop
 
 	// Loop body back to header
 	cb.addEdge(loopBody, loopHeader, nil, CFGFallthrough)
@@ -237,11 +237,11 @@ func NewCFGAnalyzer(cfg *CFG) *CFGAnalyzer {
 // GetDominators computes dominator sets for all nodes
 func (ca *CFGAnalyzer) GetDominators() map[BlockID]map[BlockID]bool {
 	dominators := make(map[BlockID]map[BlockID]bool)
-	
+
 	// Initialize dominator sets
 	for nodeID := range ca.cfg.Nodes {
 		dominators[nodeID] = make(map[BlockID]bool)
-		
+
 		// Entry node dominates only itself
 		if nodeID == ca.cfg.Entry.ID {
 			dominators[nodeID][nodeID] = true
@@ -252,21 +252,21 @@ func (ca *CFGAnalyzer) GetDominators() map[BlockID]map[BlockID]bool {
 			}
 		}
 	}
-	
+
 	// Iterative algorithm to compute dominators
 	changed := true
 	for changed {
 		changed = false
-		
+
 		for nodeID, node := range ca.cfg.Nodes {
 			if nodeID == ca.cfg.Entry.ID {
 				continue // Skip entry node
 			}
-			
+
 			// New dominator set = {node} ∪ (∩ dominators of predecessors)
 			newDoms := make(map[BlockID]bool)
 			newDoms[nodeID] = true // Node always dominates itself
-			
+
 			// Find predecessors
 			preds := ca.getPredecessors(node)
 			if len(preds) > 0 {
@@ -284,7 +284,7 @@ func (ca *CFGAnalyzer) GetDominators() map[BlockID]map[BlockID]bool {
 					}
 				}
 			}
-			
+
 			// Check if dominator set changed
 			if !ca.dominatorSetsEqual(dominators[nodeID], newDoms) {
 				dominators[nodeID] = newDoms
@@ -292,7 +292,7 @@ func (ca *CFGAnalyzer) GetDominators() map[BlockID]map[BlockID]bool {
 			}
 		}
 	}
-	
+
 	return dominators
 }
 
@@ -300,7 +300,7 @@ func (ca *CFGAnalyzer) GetDominators() map[BlockID]map[BlockID]bool {
 func (ca *CFGAnalyzer) GetReachableNodes() map[BlockID]bool {
 	reachable := make(map[BlockID]bool)
 	visited := make(map[BlockID]bool)
-	
+
 	var dfs func(*CFGNode)
 	dfs = func(node *CFGNode) {
 		if visited[node.ID] {
@@ -308,7 +308,7 @@ func (ca *CFGAnalyzer) GetReachableNodes() map[BlockID]bool {
 		}
 		visited[node.ID] = true
 		reachable[node.ID] = true
-		
+
 		// Visit successors
 		for _, edge := range ca.cfg.Edges {
 			if edge.From.ID == node.ID {
@@ -316,7 +316,7 @@ func (ca *CFGAnalyzer) GetReachableNodes() map[BlockID]bool {
 			}
 		}
 	}
-	
+
 	dfs(ca.cfg.Entry)
 	return reachable
 }
@@ -325,7 +325,7 @@ func (ca *CFGAnalyzer) GetReachableNodes() map[BlockID]bool {
 func (ca *CFGAnalyzer) GetLoops() []*Loop {
 	loops := make([]*Loop, 0)
 	dominators := ca.GetDominators()
-	
+
 	// Find back edges (edges where target dominates source)
 	for _, edge := range ca.cfg.Edges {
 		if dominators[edge.From.ID][edge.To.ID] {
@@ -335,35 +335,35 @@ func (ca *CFGAnalyzer) GetLoops() []*Loop {
 				Latch:  edge.From,
 				Nodes:  make(map[BlockID]*CFGNode),
 			}
-			
+
 			// Find all nodes in the loop
 			ca.findLoopNodes(loop, edge.To, edge.From)
 			loops = append(loops, loop)
 		}
 	}
-	
+
 	return loops
 }
 
 // Loop represents a natural loop in the CFG
 type Loop struct {
-	Header *CFGNode                  // Loop header (dominates all nodes in loop)
-	Latch  *CFGNode                  // Loop latch (has back edge to header)
-	Nodes  map[BlockID]*CFGNode      // All nodes in the loop
+	Header *CFGNode             // Loop header (dominates all nodes in loop)
+	Latch  *CFGNode             // Loop latch (has back edge to header)
+	Nodes  map[BlockID]*CFGNode // All nodes in the loop
 }
 
 // findLoopNodes finds all nodes that belong to a natural loop
 func (ca *CFGAnalyzer) findLoopNodes(loop *Loop, header, latch *CFGNode) {
 	loop.Nodes[header.ID] = header
 	loop.Nodes[latch.ID] = latch
-	
+
 	// Worklist algorithm to find all nodes in the loop
 	worklist := []*CFGNode{latch}
-	
+
 	for len(worklist) > 0 {
 		node := worklist[0]
 		worklist = worklist[1:]
-		
+
 		// Add predecessors to the loop if not already included
 		preds := ca.getPredecessors(node)
 		for _, pred := range preds {
@@ -402,13 +402,13 @@ func (ca *CFGAnalyzer) dominatorSetsEqual(set1, set2 map[BlockID]bool) bool {
 	if len(set1) != len(set2) {
 		return false
 	}
-	
+
 	for id := range set1 {
 		if !set2[id] {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -427,24 +427,24 @@ func (cv *CFGVisualizer) ToDotFormat() string {
 	result := "digraph CFG {\n"
 	result += "  rankdir=TB;\n"
 	result += "  node [shape=box];\n\n"
-	
+
 	// Add nodes
 	for _, node := range cv.cfg.Nodes {
 		label := cv.getNodeLabel(node)
 		shape := cv.getNodeShape(node)
 		result += fmt.Sprintf("  %d [label=\"%s\", shape=%s];\n", node.ID, label, shape)
 	}
-	
+
 	result += "\n"
-	
+
 	// Add edges
 	for _, edge := range cv.cfg.Edges {
 		edgeLabel := cv.getEdgeLabel(edge)
 		style := cv.getEdgeStyle(edge)
-		result += fmt.Sprintf("  %d -> %d [label=\"%s\", style=%s];\n", 
+		result += fmt.Sprintf("  %d -> %d [label=\"%s\", style=%s];\n",
 			edge.From.ID, edge.To.ID, edgeLabel, style)
 	}
-	
+
 	result += "}\n"
 	return result
 }
@@ -524,37 +524,37 @@ func (cv *CFGVisualizer) getEdgeStyle(edge *CFGEdge) string {
 
 // CFGMetrics computes various metrics for CFGs
 type CFGMetrics struct {
-	NodeCount       int
-	EdgeCount       int
+	NodeCount            int
+	EdgeCount            int
 	CyclomaticComplexity int
-	MaxDepth        int
-	LoopCount       int
-	ReachableNodes  int
-	UnreachableNodes int
+	MaxDepth             int
+	LoopCount            int
+	ReachableNodes       int
+	UnreachableNodes     int
 }
 
 // ComputeMetrics computes metrics for a CFG
 func (ca *CFGAnalyzer) ComputeMetrics() *CFGMetrics {
 	metrics := &CFGMetrics{}
-	
+
 	metrics.NodeCount = len(ca.cfg.Nodes)
 	metrics.EdgeCount = len(ca.cfg.Edges)
-	
+
 	// Cyclomatic complexity: E - N + 2 (for connected graph)
 	metrics.CyclomaticComplexity = metrics.EdgeCount - metrics.NodeCount + 2
-	
+
 	// Count reachable nodes
 	reachable := ca.GetReachableNodes()
 	metrics.ReachableNodes = len(reachable)
 	metrics.UnreachableNodes = metrics.NodeCount - metrics.ReachableNodes
-	
+
 	// Count loops
 	loops := ca.GetLoops()
 	metrics.LoopCount = len(loops)
-	
+
 	// Compute max depth (longest path from entry)
 	metrics.MaxDepth = ca.computeMaxDepth()
-	
+
 	return metrics
 }
 
@@ -562,16 +562,16 @@ func (ca *CFGAnalyzer) ComputeMetrics() *CFGMetrics {
 func (ca *CFGAnalyzer) computeMaxDepth() int {
 	depths := make(map[BlockID]int)
 	visited := make(map[BlockID]bool)
-	
+
 	var dfs func(*CFGNode, int) int
 	dfs = func(node *CFGNode, depth int) int {
 		if visited[node.ID] {
 			return depths[node.ID]
 		}
-		
+
 		visited[node.ID] = true
 		depths[node.ID] = depth
-		
+
 		maxChildDepth := depth
 		successors := ca.getSuccessors(node)
 		for _, succ := range successors {
@@ -580,10 +580,10 @@ func (ca *CFGAnalyzer) computeMaxDepth() int {
 				maxChildDepth = childDepth
 			}
 		}
-		
+
 		depths[node.ID] = maxChildDepth
 		return maxChildDepth
 	}
-	
+
 	return dfs(ca.cfg.Entry, 0)
 }

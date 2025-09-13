@@ -106,7 +106,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 	cfg.OutputFile = outputFile
 	cfg.Format = format
 	cfg.Severity = severity
-	cfg.Parallel = parallel
+	if parallel > 0 {
+		cfg.Parallel = parallel
+	}
 	cfg.Verbose = verbose
 	cfg.AllowedDirs = allowedDirs
 	cfg.ExcludedDirs = excludedDirs

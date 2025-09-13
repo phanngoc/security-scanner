@@ -179,13 +179,13 @@ func (s *Scanner) processFile(job *FileJob, findings chan<- *Finding) {
 
 	// Use ParserRegistry with caching for enhanced symbol table
 	enhancedSymbolTable, parseErr := s.parserRegistry.GetSymbolTable(job.Path)
-	
+
 	// Convert enhanced symbol table to basic for compatibility with existing rules
 	var symbolTable *parser.SymbolTable
 	if enhancedSymbolTable != nil {
 		symbolTable = s.convertEnhancedToBasic(enhancedSymbolTable)
 	}
-	
+
 	if parseErr != nil {
 		s.logger.Warn("Failed to parse file",
 			zap.String("file", job.Path),
@@ -644,7 +644,7 @@ func (s *Scanner) convertEnhancedToBasic(enhanced *lsp.SymbolTable) *parser.Symb
 	if enhanced == nil {
 		return nil
 	}
-	
+
 	basic := &parser.SymbolTable{
 		Functions: make(map[string]*parser.FunctionInfo),
 		Variables: make(map[string]*parser.VariableInfo),
@@ -652,12 +652,12 @@ func (s *Scanner) convertEnhancedToBasic(enhanced *lsp.SymbolTable) *parser.Symb
 		Language:  enhanced.Language,
 		FilePath:  enhanced.FileURI,
 	}
-	
+
 	// Traverse the scope tree to extract symbols
 	if enhanced.ScopeTree != nil {
 		s.traverseAndConvert(enhanced.ScopeTree, basic)
 	}
-	
+
 	// Copy dependency imports
 	if enhanced.DependencyGraph != nil && enhanced.DependencyGraph.Nodes != nil {
 		if node, exists := enhanced.DependencyGraph.Nodes[enhanced.FileURI]; exists {
@@ -666,7 +666,7 @@ func (s *Scanner) convertEnhancedToBasic(enhanced *lsp.SymbolTable) *parser.Symb
 			}
 		}
 	}
-	
+
 	return basic
 }
 
@@ -675,7 +675,7 @@ func (s *Scanner) traverseAndConvert(node *lsp.ScopeNode, basic *parser.SymbolTa
 	if node == nil {
 		return
 	}
-	
+
 	// Convert current node based on its kind
 	switch node.Kind {
 	case 12: // SymbolKindFunction
@@ -711,7 +711,7 @@ func (s *Scanner) traverseAndConvert(node *lsp.ScopeNode, basic *parser.SymbolTa
 			Scope:    node.NamePath,
 		}
 	}
-	
+
 	// Recursively process children
 	for _, child := range node.Children {
 		s.traverseAndConvert(child, basic)

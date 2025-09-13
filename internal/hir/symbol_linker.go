@@ -8,9 +8,9 @@ import (
 
 // SymbolLinker resolves cross-file symbol references
 type SymbolLinker struct {
-	program     *HIRProgram
-	resolver    *NameResolver
-	callGraph   *CallGraphBuilder
+	program      *HIRProgram
+	resolver     *NameResolver
+	callGraph    *CallGraphBuilder
 	includeGraph *IncludeGraphBuilder
 }
 
@@ -311,8 +311,8 @@ func (igb *IncludeGraphBuilder) BuildIncludeGraph() error {
 
 	for filePath, file := range igb.program.Files {
 		node := &IncludeNode{
-			File:     filePath,
-			Includes: make([]string, 0),
+			File:       filePath,
+			Includes:   make([]string, 0),
 			IncludedBy: make([]string, 0),
 		}
 

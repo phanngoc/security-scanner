@@ -135,13 +135,13 @@ func (b *BaseNode) String() string {
 // ProgramNode represents the root of an AST
 type ProgramNode struct {
 	BaseNode
-	Language    string
-	SourceCode  string
-	Imports     []*ImportNode
-	Functions   []*FunctionNode
-	Classes     []*ClassNode
-	Variables   []*VariableNode
-	Namespace   string
+	Language   string
+	SourceCode string
+	Imports    []*ImportNode
+	Functions  []*FunctionNode
+	Classes    []*ClassNode
+	Variables  []*VariableNode
+	Namespace  string
 }
 
 // FunctionNode represents a function declaration
@@ -155,8 +155,8 @@ type FunctionNode struct {
 	IsStatic     bool
 	IsAbstract   bool
 	Annotations  []string
-	CallsUnsafe  bool  // Security flag
-	HasUserInput bool  // Security flag
+	CallsUnsafe  bool // Security flag
+	HasUserInput bool // Security flag
 }
 
 // ClassNode represents a class declaration
@@ -176,13 +176,13 @@ type ClassNode struct {
 // VariableNode represents a variable declaration or usage
 type VariableNode struct {
 	BaseNode
-	Name       string
-	Type       string
-	Value      ASTNode
-	Scope      string
-	IsGlobal   bool
-	IsTainted  bool  // Security flag for data flow analysis
-	Source     string // Where the data comes from (user input, database, etc.)
+	Name      string
+	Type      string
+	Value     ASTNode
+	Scope     string
+	IsGlobal  bool
+	IsTainted bool   // Security flag for data flow analysis
+	Source    string // Where the data comes from (user input, database, etc.)
 }
 
 // ParameterNode represents a function parameter
@@ -193,7 +193,7 @@ type ParameterNode struct {
 	DefaultValue ASTNode
 	IsOptional   bool
 	IsVariadic   bool
-	IsTainted    bool  // Security flag
+	IsTainted    bool // Security flag
 }
 
 // ImportNode represents an import/include statement
@@ -224,11 +224,11 @@ type BlockNode struct {
 // FunctionCallNode represents a function call
 type FunctionCallNode struct {
 	BaseNode
-	Function  string
-	Arguments []ASTNode
-	Receiver  ASTNode  // For method calls
-	IsSafe    bool     // Security flag
-	IsUserControlled bool // If arguments are user-controlled
+	Function         string
+	Arguments        []ASTNode
+	Receiver         ASTNode // For method calls
+	IsSafe           bool    // Security flag
+	IsUserControlled bool    // If arguments are user-controlled
 }
 
 // LiteralNode represents a literal value
@@ -277,13 +277,13 @@ type ConditionalNode struct {
 // LoopNode represents loops (for, while, foreach)
 type LoopNode struct {
 	BaseNode
-	LoopType   LoopType
-	Init       ASTNode
-	Condition  ASTNode
-	Update     ASTNode
-	Body       *BlockNode
-	Variable   *VariableNode  // For foreach loops
-	Iterable   ASTNode        // For foreach loops
+	LoopType  LoopType
+	Init      ASTNode
+	Condition ASTNode
+	Update    ASTNode
+	Body      *BlockNode
+	Variable  *VariableNode // For foreach loops
+	Iterable  ASTNode       // For foreach loops
 }
 
 type LoopType int
@@ -340,16 +340,16 @@ func (v *BaseVisitor) Visit(node ASTNode) error {
 	}
 }
 
-func (v *BaseVisitor) VisitProgram(node *ProgramNode) error { return nil }
-func (v *BaseVisitor) VisitFunction(node *FunctionNode) error { return nil }
-func (v *BaseVisitor) VisitClass(node *ClassNode) error { return nil }
-func (v *BaseVisitor) VisitVariable(node *VariableNode) error { return nil }
+func (v *BaseVisitor) VisitProgram(node *ProgramNode) error           { return nil }
+func (v *BaseVisitor) VisitFunction(node *FunctionNode) error         { return nil }
+func (v *BaseVisitor) VisitClass(node *ClassNode) error               { return nil }
+func (v *BaseVisitor) VisitVariable(node *VariableNode) error         { return nil }
 func (v *BaseVisitor) VisitFunctionCall(node *FunctionCallNode) error { return nil }
-func (v *BaseVisitor) VisitLiteral(node *LiteralNode) error { return nil }
-func (v *BaseVisitor) VisitBinaryOp(node *BinaryOpNode) error { return nil }
-func (v *BaseVisitor) VisitAssignment(node *AssignmentNode) error { return nil }
-func (v *BaseVisitor) VisitConditional(node *ConditionalNode) error { return nil }
-func (v *BaseVisitor) VisitLoop(node *LoopNode) error { return nil }
+func (v *BaseVisitor) VisitLiteral(node *LiteralNode) error           { return nil }
+func (v *BaseVisitor) VisitBinaryOp(node *BinaryOpNode) error         { return nil }
+func (v *BaseVisitor) VisitAssignment(node *AssignmentNode) error     { return nil }
+func (v *BaseVisitor) VisitConditional(node *ConditionalNode) error   { return nil }
+func (v *BaseVisitor) VisitLoop(node *LoopNode) error                 { return nil }
 
 // SecurityContext provides security-related metadata for AST nodes
 type SecurityContext struct {
@@ -379,13 +379,13 @@ type SymbolTable struct {
 
 // Symbol represents a symbol in the symbol table
 type Symbol struct {
-	Name         string
-	Type         string
-	Kind         SymbolKind
-	Position     Position
-	Scope        *Scope
-	Node         ASTNode
-	SecurityCtx  *SecurityContext
+	Name        string
+	Type        string
+	Kind        SymbolKind
+	Position    Position
+	Scope       *Scope
+	Node        ASTNode
+	SecurityCtx *SecurityContext
 }
 
 type SymbolKind int
@@ -404,11 +404,11 @@ const (
 // FunctionSymbol represents function-specific symbol information
 type FunctionSymbol struct {
 	*Symbol
-	Parameters   []*ParameterSymbol
-	ReturnType   string
-	CallSites    []*CallSite
-	IsSafe       bool
-	TaintFlow    *TaintFlow
+	Parameters []*ParameterSymbol
+	ReturnType string
+	CallSites  []*CallSite
+	IsSafe     bool
+	TaintFlow  *TaintFlow
 }
 
 // ClassSymbol represents class-specific symbol information
@@ -458,9 +458,9 @@ const (
 
 // CallSite represents a function call location
 type CallSite struct {
-	Position   Position
-	Arguments  []ASTNode
-	Context    *SecurityContext
+	Position  Position
+	Arguments []ASTNode
+	Context   *SecurityContext
 }
 
 // AssignmentSite represents a variable assignment location
@@ -540,11 +540,11 @@ func (st *SymbolTable) PushScope(scopeType ScopeType) *Scope {
 		Level:   len(st.Scopes),
 		Type:    scopeType,
 	}
-	
+
 	if st.CurrentScope != nil {
 		st.CurrentScope.Children = append(st.CurrentScope.Children, scope)
 	}
-	
+
 	st.Scopes = append(st.Scopes, scope)
 	st.CurrentScope = scope
 	return scope

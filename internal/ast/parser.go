@@ -10,22 +10,22 @@ import (
 type ASTParser interface {
 	// Parse parses source code and returns an AST
 	Parse(content []byte, filename string) (*ProgramNode, *ParseStats, error)
-	
+
 	// GetLanguage returns the language this parser handles
 	GetLanguage() string
-	
+
 	// GetSupportedExtensions returns file extensions this parser supports
 	GetSupportedExtensions() []string
-	
+
 	// BuildSymbolTable builds a symbol table from the AST
 	BuildSymbolTable(ast *ProgramNode) (*SymbolTable, error)
-	
+
 	// ValidateAST validates the AST for correctness
 	ValidateAST(ast *ProgramNode) []error
-	
+
 	// GetParseOptions returns available parsing options
 	GetParseOptions() *ParseOptions
-	
+
 	// SetParseOptions sets parsing options
 	SetParseOptions(options *ParseOptions)
 }
@@ -34,28 +34,28 @@ type ASTParser interface {
 type ParseOptions struct {
 	// Include comments in AST
 	IncludeComments bool
-	
+
 	// Include whitespace nodes
 	IncludeWhitespace bool
-	
+
 	// Perform semantic analysis
 	SemanticAnalysis bool
-	
+
 	// Build symbol table
 	BuildSymbolTable bool
-	
+
 	// Perform taint analysis
 	TaintAnalysis bool
-	
+
 	// Maximum parse time
 	MaxParseTime time.Duration
-	
+
 	// Error recovery mode
 	ErrorRecovery bool
-	
+
 	// Debug mode
 	Debug bool
-	
+
 	// Language-specific options
 	LanguageOptions map[string]interface{}
 }
@@ -77,9 +77,9 @@ func DefaultParseOptions() *ParseOptions {
 
 // ParserRegistry manages language-specific parsers
 type ParserRegistry struct {
-	parsers      map[string]ASTParser
-	extensions   map[string]ASTParser
-	defaultOpts  *ParseOptions
+	parsers     map[string]ASTParser
+	extensions  map[string]ASTParser
+	defaultOpts *ParseOptions
 }
 
 // NewParserRegistry creates a new parser registry
@@ -95,7 +95,7 @@ func NewParserRegistry() *ParserRegistry {
 func (pr *ParserRegistry) RegisterParser(parser ASTParser) {
 	language := parser.GetLanguage()
 	pr.parsers[language] = parser
-	
+
 	for _, ext := range parser.GetSupportedExtensions() {
 		pr.extensions[ext] = parser
 	}
@@ -132,7 +132,7 @@ func (pr *ParserRegistry) GetSupportedExtensions() []string {
 // Parse parses content using the appropriate parser
 func (pr *ParserRegistry) Parse(content []byte, filename string, language string) (*ProgramNode, *ParseStats, error) {
 	var parser ASTParser
-	
+
 	if language != "" {
 		parser = pr.GetParser(language)
 	} else {
@@ -144,24 +144,24 @@ func (pr *ParserRegistry) Parse(content []byte, filename string, language string
 			}
 		}
 	}
-	
+
 	if parser == nil {
 		return nil, nil, fmt.Errorf("no parser found for language '%s' or filename '%s'", language, filename)
 	}
-	
+
 	// Set default options if not already set
 	if parser.GetParseOptions() == nil {
 		parser.SetParseOptions(pr.defaultOpts)
 	}
-	
+
 	return parser.Parse(content, filename)
 }
 
 // BaseASTParser provides common functionality for AST parsers
 type BaseASTParser struct {
-	language         string
-	extensions       []string
-	options          *ParseOptions
+	language   string
+	extensions []string
+	options    *ParseOptions
 }
 
 // NewBaseASTParser creates a new base parser
@@ -196,17 +196,17 @@ func (p *BaseASTParser) SetParseOptions(options *ParseOptions) {
 // ValidateAST performs basic AST validation
 func (p *BaseASTParser) ValidateAST(ast *ProgramNode) []error {
 	var errors []error
-	
+
 	// Basic validation - can be overridden by specific parsers
 	if ast == nil {
 		errors = append(errors, fmt.Errorf("AST is nil"))
 		return errors
 	}
-	
+
 	if ast.Language != p.language {
 		errors = append(errors, fmt.Errorf("AST language mismatch: expected %s, got %s", p.language, ast.Language))
 	}
-	
+
 	return errors
 }
 
@@ -334,14 +334,14 @@ func (w *ASTWalker) Walk(node ASTNode) error {
 			return err
 		}
 	}
-	
+
 	// Walk children
 	for _, child := range node.GetChildren() {
 		if err := w.Walk(child); err != nil {
 			return err
 		}
 	}
-	
+
 	return nil
 }
 
@@ -366,14 +366,14 @@ type SecurityRule interface {
 
 // SecurityFinding represents a security finding
 type SecurityFinding struct {
-	RuleID      string
-	Message     string
-	Position    Position
-	Severity    Severity
-	CWE         string
-	OWASP       string
-	Confidence  int
-	Context     string
+	RuleID     string
+	Message    string
+	Position   Position
+	Severity   Severity
+	CWE        string
+	OWASP      string
+	Confidence int
+	Context    string
 }
 
 type Severity int
@@ -402,16 +402,16 @@ func (sa *SecurityAnalyzer) AddRule(rule SecurityRule) {
 // Analyze performs security analysis on AST
 func (sa *SecurityAnalyzer) Analyze(ast *ProgramNode) ([]SecurityFinding, error) {
 	var findings []SecurityFinding
-	
+
 	walker := NewASTWalker()
-	
+
 	// Add security analysis visitor
 	visitor := &SecurityVisitor{
 		analyzer: sa,
 		findings: &findings,
 	}
 	walker.AddVisitor(visitor)
-	
+
 	err := walker.Walk(ast)
 	return findings, err
 }
@@ -465,23 +465,23 @@ func (dp *DebugPrinter) printNode(node ASTNode) {
 
 // ASTMetrics provides AST metrics
 type ASTMetrics struct {
-	NodeCount      int
-	FunctionCount  int
-	ClassCount     int
-	VariableCount  int
-	MaxDepth       int
+	NodeCount            int
+	FunctionCount        int
+	ClassCount           int
+	VariableCount        int
+	MaxDepth             int
 	CyclomaticComplexity int
 }
 
 // CalculateMetrics calculates AST metrics
 func CalculateMetrics(ast *ProgramNode) *ASTMetrics {
 	metrics := &ASTMetrics{}
-	
+
 	walker := NewASTWalker()
 	visitor := &MetricsVisitor{metrics: metrics}
 	walker.AddVisitor(visitor)
 	walker.Walk(ast)
-	
+
 	return metrics
 }
 
@@ -495,11 +495,11 @@ type MetricsVisitor struct {
 // Visit calculates metrics for each node
 func (v *MetricsVisitor) Visit(node ASTNode) error {
 	v.metrics.NodeCount++
-	
+
 	if v.depth > v.metrics.MaxDepth {
 		v.metrics.MaxDepth = v.depth
 	}
-	
+
 	return nil
 }
 

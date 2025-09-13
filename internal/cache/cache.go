@@ -16,10 +16,10 @@ import (
 
 // SymbolTableCache manages cached symbol tables for improved performance
 type SymbolTableCache struct {
-	cacheDir string
-	logger   *zap.Logger
-	maxSize  int64 // Maximum cache size in bytes
-	maxAge   time.Duration
+	cacheDir   string
+	logger     *zap.Logger
+	maxSize    int64 // Maximum cache size in bytes
+	maxAge     time.Duration
 	metadataMu sync.Mutex // Protects metadata operations
 }
 
@@ -459,7 +459,7 @@ func (c *SymbolTableCache) initializeMetadata() {
 func (c *SymbolTableCache) updateMetadata(filePath string, entry *CacheEntry, cachePath string) {
 	c.metadataMu.Lock()
 	defer c.metadataMu.Unlock()
-	
+
 	metadata, err := c.loadMetadata()
 	if err != nil {
 		c.logger.Warn("Failed to load metadata for update", zap.Error(err))
@@ -495,7 +495,7 @@ func (c *SymbolTableCache) updateMetadata(filePath string, entry *CacheEntry, ca
 func (c *SymbolTableCache) removeFromMetadata(filePath string) {
 	c.metadataMu.Lock()
 	defer c.metadataMu.Unlock()
-	
+
 	metadata, err := c.loadMetadata()
 	if err != nil {
 		c.logger.Warn("Failed to load metadata for removal", zap.Error(err))

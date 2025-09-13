@@ -11,7 +11,7 @@ import (
 func DemoHIRSystem() error {
 	// Create logger
 	logger, _ := zap.NewDevelopment()
-	
+
 	// Initialize HIR program
 	program := &HIRProgram{
 		Files:           make(map[string]*HIRFile),
@@ -94,7 +94,7 @@ mysqli_query($connection, $query);
 	// Run enhanced HIR security analysis
 	fmt.Printf("\nRunning Enhanced HIR Security Analysis:\n")
 	securityAnalyzer := NewHIRSecurityAnalyzer(program)
-	
+
 	// Analyze the demo file
 	for _, hirFile := range program.Files {
 		securityFindings, err := securityAnalyzer.AnalyzeFile(hirFile)

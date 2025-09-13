@@ -16,10 +16,10 @@ func NewSecurityRuleEngine() *SecurityRuleEngine {
 	engine := &SecurityRuleEngine{
 		rules: make([]SecurityRule, 0),
 	}
-	
+
 	// Register default security rules
 	engine.RegisterDefaultRules()
-	
+
 	return engine
 }
 
@@ -33,38 +33,38 @@ func (sre *SecurityRuleEngine) RegisterDefaultRules() {
 	// SQL Injection rules
 	sre.RegisterRule(NewSQLInjectionRule())
 	sre.RegisterRule(NewPDOSQLInjectionRule())
-	
+
 	// XSS rules
 	sre.RegisterRule(NewXSSRule())
 	sre.RegisterRule(NewReflectedXSSRule())
-	
+
 	// Command Injection rules
 	sre.RegisterRule(NewCommandInjectionRule())
-	
+
 	// Path Traversal rules
 	sre.RegisterRule(NewPathTraversalRule())
-	
+
 	// Hardcoded Secrets rules
 	sre.RegisterRule(NewHardcodedSecretsRule())
-	
+
 	// Insecure Cryptography rules
 	sre.RegisterRule(NewWeakCryptographyRule())
-	
+
 	// File Upload rules
 	sre.RegisterRule(NewInsecureFileUploadRule())
-	
+
 	// Authentication/Authorization rules
 	sre.RegisterRule(NewWeakAuthenticationRule())
-	
+
 	// Session Security rules
 	sre.RegisterRule(NewInsecureSessionRule())
-	
+
 	// LDAP Injection rules
 	sre.RegisterRule(NewLDAPInjectionRule())
-	
+
 	// XXE rules
 	sre.RegisterRule(NewXXERule())
-	
+
 	// Deserialization rules
 	sre.RegisterRule(NewUnsafeDeserializationRule())
 }
@@ -72,19 +72,19 @@ func (sre *SecurityRuleEngine) RegisterDefaultRules() {
 // AnalyzeAST analyzes an AST and returns security findings
 func (sre *SecurityRuleEngine) AnalyzeAST(ast *ProgramNode, symbolTable *SymbolTable) ([]SecurityFinding, error) {
 	var findings []SecurityFinding
-	
+
 	analyzer := NewSecurityAnalyzer(symbolTable)
 	for _, rule := range sre.rules {
 		analyzer.AddRule(rule)
 	}
-	
+
 	ruleFindings, err := analyzer.Analyze(ast)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	findings = append(findings, ruleFindings...)
-	
+
 	return findings, nil
 }
 
@@ -105,20 +105,20 @@ func NewSQLInjectionRule() *SQLInjectionRule {
 	}
 }
 
-func (r *SQLInjectionRule) GetID() string     { return r.id }
-func (r *SQLInjectionRule) GetName() string   { return r.name }
+func (r *SQLInjectionRule) GetID() string         { return r.id }
+func (r *SQLInjectionRule) GetName() string       { return r.name }
 func (r *SQLInjectionRule) GetSeverity() Severity { return r.severity }
 
 func (r *SQLInjectionRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	var findings []SecurityFinding
-	
+
 	if callNode, ok := node.(*FunctionCallNode); ok {
 		// Check for dangerous SQL functions
 		dangerousFunctions := []string{
 			"mysql_query", "mysqli_query", "pg_query", "sqlite_query",
 			"query", "exec", "execute", "prepare",
 		}
-		
+
 		for _, dangerous := range dangerousFunctions {
 			if strings.Contains(strings.ToLower(callNode.Function), strings.ToLower(dangerous)) {
 				// Check if any arguments come from user input
@@ -138,7 +138,7 @@ func (r *SQLInjectionRule) Check(node ASTNode, st *SymbolTable) []SecurityFindin
 			}
 		}
 	}
-	
+
 	return findings
 }
 
@@ -171,16 +171,16 @@ func NewPDOSQLInjectionRule() *PDOSQLInjectionRule {
 	}
 }
 
-func (r *PDOSQLInjectionRule) GetID() string     { return r.id }
-func (r *PDOSQLInjectionRule) GetName() string   { return r.name }
+func (r *PDOSQLInjectionRule) GetID() string         { return r.id }
+func (r *PDOSQLInjectionRule) GetName() string       { return r.name }
 func (r *PDOSQLInjectionRule) GetSeverity() Severity { return r.severity }
 
 func (r *PDOSQLInjectionRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	var findings []SecurityFinding
-	
+
 	if callNode, ok := node.(*FunctionCallNode); ok {
 		pdoMethods := []string{"query", "exec", "prepare"}
-		
+
 		for _, method := range pdoMethods {
 			if strings.ToLower(callNode.Function) == method {
 				// Check for string concatenation in SQL
@@ -200,7 +200,7 @@ func (r *PDOSQLInjectionRule) Check(node ASTNode, st *SymbolTable) []SecurityFin
 			}
 		}
 	}
-	
+
 	return findings
 }
 
@@ -230,18 +230,18 @@ func NewXSSRule() *XSSRule {
 	}
 }
 
-func (r *XSSRule) GetID() string     { return r.id }
-func (r *XSSRule) GetName() string   { return r.name }
+func (r *XSSRule) GetID() string         { return r.id }
+func (r *XSSRule) GetName() string       { return r.name }
 func (r *XSSRule) GetSeverity() Severity { return r.severity }
 
 func (r *XSSRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	var findings []SecurityFinding
-	
+
 	if callNode, ok := node.(*FunctionCallNode); ok {
 		outputFunctions := []string{
 			"echo", "print", "printf", "sprintf", "print_r", "var_dump",
 		}
-		
+
 		for _, outputFunc := range outputFunctions {
 			if strings.ToLower(callNode.Function) == outputFunc {
 				if r.hasUnescapedUserInput(callNode, st) {
@@ -260,7 +260,7 @@ func (r *XSSRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 			}
 		}
 	}
-	
+
 	return findings
 }
 
@@ -310,13 +310,13 @@ func NewReflectedXSSRule() *ReflectedXSSRule {
 	}
 }
 
-func (r *ReflectedXSSRule) GetID() string     { return r.id }
-func (r *ReflectedXSSRule) GetName() string   { return r.name }
+func (r *ReflectedXSSRule) GetID() string         { return r.id }
+func (r *ReflectedXSSRule) GetName() string       { return r.name }
 func (r *ReflectedXSSRule) GetSeverity() Severity { return r.severity }
 
 func (r *ReflectedXSSRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	var findings []SecurityFinding
-	
+
 	if assignNode, ok := node.(*AssignmentNode); ok {
 		// Check if assignment directly uses $_GET, $_POST, $_REQUEST
 		if r.usesSuperglobal(assignNode) {
@@ -333,7 +333,7 @@ func (r *ReflectedXSSRule) Check(node ASTNode, st *SymbolTable) []SecurityFindin
 			findings = append(findings, finding)
 		}
 	}
-	
+
 	return findings
 }
 
@@ -365,19 +365,19 @@ func NewCommandInjectionRule() *CommandInjectionRule {
 	}
 }
 
-func (r *CommandInjectionRule) GetID() string     { return r.id }
-func (r *CommandInjectionRule) GetName() string   { return r.name }
+func (r *CommandInjectionRule) GetID() string         { return r.id }
+func (r *CommandInjectionRule) GetName() string       { return r.name }
 func (r *CommandInjectionRule) GetSeverity() Severity { return r.severity }
 
 func (r *CommandInjectionRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	var findings []SecurityFinding
-	
+
 	if callNode, ok := node.(*FunctionCallNode); ok {
 		dangerousFunctions := []string{
 			"exec", "system", "shell_exec", "passthru", "eval",
 			"popen", "proc_open", "backticks",
 		}
-		
+
 		for _, dangerous := range dangerousFunctions {
 			if strings.ToLower(callNode.Function) == dangerous {
 				if r.hasUserInput(callNode, st) {
@@ -396,7 +396,7 @@ func (r *CommandInjectionRule) Check(node ASTNode, st *SymbolTable) []SecurityFi
 			}
 		}
 	}
-	
+
 	return findings
 }
 
@@ -428,19 +428,19 @@ func NewPathTraversalRule() *PathTraversalRule {
 	}
 }
 
-func (r *PathTraversalRule) GetID() string     { return r.id }
-func (r *PathTraversalRule) GetName() string   { return r.name }
+func (r *PathTraversalRule) GetID() string         { return r.id }
+func (r *PathTraversalRule) GetName() string       { return r.name }
 func (r *PathTraversalRule) GetSeverity() Severity { return r.severity }
 
 func (r *PathTraversalRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	var findings []SecurityFinding
-	
+
 	if callNode, ok := node.(*FunctionCallNode); ok {
 		fileFunctions := []string{
 			"file_get_contents", "file_put_contents", "fopen", "readfile",
 			"include", "require", "include_once", "require_once",
 		}
-		
+
 		for _, fileFunc := range fileFunctions {
 			if strings.ToLower(callNode.Function) == fileFunc {
 				if r.hasPathTraversalRisk(callNode, st) {
@@ -459,7 +459,7 @@ func (r *PathTraversalRule) Check(node ASTNode, st *SymbolTable) []SecurityFindi
 			}
 		}
 	}
-	
+
 	return findings
 }
 
@@ -518,7 +518,7 @@ func NewHardcodedSecretsRule() *HardcodedSecretsRule {
 		regexp.MustCompile(`(?i)(secret|token)\s*=\s*["'][^"']{12,}["']`),
 		regexp.MustCompile(`(?i)(db_pass|database_password)\s*=\s*["'][^"']{4,}["']`),
 	}
-	
+
 	return &HardcodedSecretsRule{
 		id:       "SEC-001",
 		name:     "Hardcoded Secrets",
@@ -527,13 +527,13 @@ func NewHardcodedSecretsRule() *HardcodedSecretsRule {
 	}
 }
 
-func (r *HardcodedSecretsRule) GetID() string     { return r.id }
-func (r *HardcodedSecretsRule) GetName() string   { return r.name }
+func (r *HardcodedSecretsRule) GetID() string         { return r.id }
+func (r *HardcodedSecretsRule) GetName() string       { return r.name }
 func (r *HardcodedSecretsRule) GetSeverity() Severity { return r.severity }
 
 func (r *HardcodedSecretsRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	var findings []SecurityFinding
-	
+
 	if assignNode, ok := node.(*AssignmentNode); ok {
 		if literalNode, ok := assignNode.Right.(*LiteralNode); ok {
 			if literalNode.Kind == LiteralString {
@@ -557,7 +557,7 @@ func (r *HardcodedSecretsRule) Check(node ASTNode, st *SymbolTable) []SecurityFi
 			}
 		}
 	}
-	
+
 	return findings
 }
 
@@ -576,21 +576,21 @@ func NewWeakCryptographyRule() *WeakCryptographyRule {
 	}
 }
 
-func (r *WeakCryptographyRule) GetID() string     { return r.id }
-func (r *WeakCryptographyRule) GetName() string   { return r.name }
+func (r *WeakCryptographyRule) GetID() string         { return r.id }
+func (r *WeakCryptographyRule) GetName() string       { return r.name }
 func (r *WeakCryptographyRule) GetSeverity() Severity { return r.severity }
 
 func (r *WeakCryptographyRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	var findings []SecurityFinding
-	
+
 	if callNode, ok := node.(*FunctionCallNode); ok {
 		weakFunctions := map[string]string{
-			"md5":     "MD5 is cryptographically broken",
-			"sha1":    "SHA1 is cryptographically weak",
-			"crypt":   "crypt() uses weak algorithms by default",
-			"mcrypt":  "mcrypt is deprecated and insecure",
+			"md5":    "MD5 is cryptographically broken",
+			"sha1":   "SHA1 is cryptographically weak",
+			"crypt":  "crypt() uses weak algorithms by default",
+			"mcrypt": "mcrypt is deprecated and insecure",
 		}
-		
+
 		for weakFunc, message := range weakFunctions {
 			if strings.ToLower(callNode.Function) == weakFunc {
 				finding := SecurityFinding{
@@ -607,7 +607,7 @@ func (r *WeakCryptographyRule) Check(node ASTNode, st *SymbolTable) []SecurityFi
 			}
 		}
 	}
-	
+
 	return findings
 }
 
@@ -622,8 +622,8 @@ func NewInsecureFileUploadRule() *InsecureFileUploadRule {
 	return &InsecureFileUploadRule{"UPLOAD-001", "Insecure File Upload", SeverityHigh}
 }
 
-func (r *InsecureFileUploadRule) GetID() string       { return r.id }
-func (r *InsecureFileUploadRule) GetName() string     { return r.name }
+func (r *InsecureFileUploadRule) GetID() string         { return r.id }
+func (r *InsecureFileUploadRule) GetName() string       { return r.name }
 func (r *InsecureFileUploadRule) GetSeverity() Severity { return r.severity }
 func (r *InsecureFileUploadRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	// Implementation for file upload security checks
@@ -639,8 +639,8 @@ func NewWeakAuthenticationRule() *WeakAuthenticationRule {
 	return &WeakAuthenticationRule{"AUTH-001", "Weak Authentication", SeverityHigh}
 }
 
-func (r *WeakAuthenticationRule) GetID() string       { return r.id }
-func (r *WeakAuthenticationRule) GetName() string     { return r.name }
+func (r *WeakAuthenticationRule) GetID() string         { return r.id }
+func (r *WeakAuthenticationRule) GetName() string       { return r.name }
 func (r *WeakAuthenticationRule) GetSeverity() Severity { return r.severity }
 func (r *WeakAuthenticationRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	// Implementation for authentication security checks
@@ -656,8 +656,8 @@ func NewInsecureSessionRule() *InsecureSessionRule {
 	return &InsecureSessionRule{"SESSION-001", "Insecure Session", SeverityMedium}
 }
 
-func (r *InsecureSessionRule) GetID() string       { return r.id }
-func (r *InsecureSessionRule) GetName() string     { return r.name }
+func (r *InsecureSessionRule) GetID() string         { return r.id }
+func (r *InsecureSessionRule) GetName() string       { return r.name }
 func (r *InsecureSessionRule) GetSeverity() Severity { return r.severity }
 func (r *InsecureSessionRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	// Implementation for session security checks
@@ -673,8 +673,8 @@ func NewLDAPInjectionRule() *LDAPInjectionRule {
 	return &LDAPInjectionRule{"LDAP-001", "LDAP Injection", SeverityHigh}
 }
 
-func (r *LDAPInjectionRule) GetID() string       { return r.id }
-func (r *LDAPInjectionRule) GetName() string     { return r.name }
+func (r *LDAPInjectionRule) GetID() string         { return r.id }
+func (r *LDAPInjectionRule) GetName() string       { return r.name }
 func (r *LDAPInjectionRule) GetSeverity() Severity { return r.severity }
 func (r *LDAPInjectionRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	// Implementation for LDAP injection checks
@@ -690,8 +690,8 @@ func NewXXERule() *XXERule {
 	return &XXERule{"XXE-001", "XML External Entity", SeverityHigh}
 }
 
-func (r *XXERule) GetID() string       { return r.id }
-func (r *XXERule) GetName() string     { return r.name }
+func (r *XXERule) GetID() string         { return r.id }
+func (r *XXERule) GetName() string       { return r.name }
 func (r *XXERule) GetSeverity() Severity { return r.severity }
 func (r *XXERule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	// Implementation for XXE vulnerability checks
@@ -707,15 +707,15 @@ func NewUnsafeDeserializationRule() *UnsafeDeserializationRule {
 	return &UnsafeDeserializationRule{"DESER-001", "Unsafe Deserialization", SeverityHigh}
 }
 
-func (r *UnsafeDeserializationRule) GetID() string       { return r.id }
-func (r *UnsafeDeserializationRule) GetName() string     { return r.name }
+func (r *UnsafeDeserializationRule) GetID() string         { return r.id }
+func (r *UnsafeDeserializationRule) GetName() string       { return r.name }
 func (r *UnsafeDeserializationRule) GetSeverity() Severity { return r.severity }
 func (r *UnsafeDeserializationRule) Check(node ASTNode, st *SymbolTable) []SecurityFinding {
 	var findings []SecurityFinding
-	
+
 	if callNode, ok := node.(*FunctionCallNode); ok {
 		dangerousFunctions := []string{"unserialize", "eval"}
-		
+
 		for _, dangerous := range dangerousFunctions {
 			if strings.ToLower(callNode.Function) == dangerous {
 				finding := SecurityFinding{
@@ -732,6 +732,6 @@ func (r *UnsafeDeserializationRule) Check(node ASTNode, st *SymbolTable) []Secur
 			}
 		}
 	}
-	
+
 	return findings
 }

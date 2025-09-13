@@ -23,7 +23,7 @@ type WorkspaceIndex struct {
 // NewWorkspaceIndex creates a new workspace index
 func NewWorkspaceIndex(workspacePath string, logger *zap.Logger) (*WorkspaceIndex, error) {
 	dbPath := filepath.Join(workspacePath, ".security-scanner", "index.db")
-	
+
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(dbPath)
 	if err := ensureDir(dir); err != nil {

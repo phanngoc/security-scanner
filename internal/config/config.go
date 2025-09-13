@@ -63,7 +63,7 @@ func Load() *Config {
 			MaxFiles:  0,                  // Default: unlimited
 		},
 		LSP: LSPConfig{
-			Enabled: true, // Default: LSP enabled
+			Enabled: false, // Default: LSP disabled to avoid timeout issues
 		},
 		Rules: RulesConfig{
 			Enabled: []string{
@@ -140,7 +140,7 @@ func Load() *Config {
 	if viper.IsSet("lsp") {
 		viper.UnmarshalKey("lsp", &cfg.LSP)
 	}
-	
+
 	// Set NoLsp based on LSP.Enabled
 	cfg.NoLsp = !cfg.LSP.Enabled
 
