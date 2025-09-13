@@ -32,7 +32,7 @@ func New(cfg *config.Config, logger *zap.Logger) *Scanner {
 		config:         cfg,
 		logger:         logger,
 		ruleEngine:     rules.NewRuleEngine(cfg),
-		parserRegistry: parser.NewParserRegistry(".", logger),
+		parserRegistry: parser.NewParserRegistry(".", cfg, logger),
 	}
 }
 

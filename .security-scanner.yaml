@@ -101,3 +101,11 @@ output:
 performance:
   parallel: 0  # 0 = auto-detect CPU cores
   timeout: 300  # seconds
+
+# Cache configuration
+cache:
+  enabled: true
+  directory: ".cache"
+  max_size: 1073741824  # 1GB in bytes
+  max_age: 168  # 7 days in hours
+  max_files: 0  # unlimited

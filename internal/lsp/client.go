@@ -190,7 +190,7 @@ func (c *LSPClient) startLanguageServer() error {
 	}
 
 	c.cmd = exec.CommandContext(c.ctx, serverCmd, args...)
-	
+
 	c.logger.Info("Starting language server",
 		zap.String("language", c.language),
 		zap.String("command", serverCmd),

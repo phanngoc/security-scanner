@@ -1,0 +1,1164 @@
+package hir
+
+import (
+	"fmt"
+	"go/token"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/z7zmey/php-parser/node"
+	"github.com/z7zmey/php-parser/node/expr"
+	"github.com/z7zmey/php-parser/node/expr/assign"
+	"github.com/z7zmey/php-parser/node/expr/binary"
+	"github.com/z7zmey/php-parser/node/name"
+	"github.com/z7zmey/php-parser/node/scalar"
+	"github.com/z7zmey/php-parser/node/stmt"
+	"github.com/z7zmey/php-parser/parser"
+	"github.com/z7zmey/php-parser/position"
+	"github.com/z7zmey/php-parser/version"
+)
+
+// ASTToHIRTransformer converts PHP AST to HIR
+type ASTToHIRTransformer struct {
+	program    *HIRProgram
+	currentFile *HIRFile
+	currentUnit *HIRUnit
+	nextStmtID StmtID
+	nextVarID  VariableID
+	nextBlockID BlockID
+	stmtCounter int
+	varMap     map[string]*Variable  // variable name -> Variable
+	blockStack []*HIRBlock          // for nested control structures
+}
+
+// NewASTToHIRTransformer creates a new transformer
+func NewASTToHIRTransformer() *ASTToHIRTransformer {
+	return &ASTToHIRTransformer{
+		program:     NewHIRProgram(),
+		nextStmtID:  1,
+		nextVarID:   1,
+		nextBlockID: 1,
+		varMap:      make(map[string]*Variable),
+		blockStack:  make([]*HIRBlock, 0),
+	}
+}
+
+// TransformFile transforms a PHP file to HIR
+func (t *ASTToHIRTransformer) TransformFile(filePath string, content []byte) (*HIRFile, error) {
+	// Parse PHP using z7zmey/php-parser
+	phpVersion := &version.Version{Major: 8, Minor: 0}
+	rootNode, err := parser.Parse(content, phpVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse PHP file %s: %w", filePath, err)
+	}
+
+	// Create HIR file
+	hirFile := &HIRFile{
+		Path:     filePath,
+		Language: "php",
+		Symbols:  make([]*Symbol, 0),
+		Units:    make([]*HIRUnit, 0),
+		Includes: make([]*Include, 0),
+	}
+
+	t.currentFile = hirFile
+	t.varMap = make(map[string]*Variable)  // Reset for each file
+
+	// Transform AST to HIR
+	err = t.transformNode(rootNode)
+	if err != nil {
+		return nil, fmt.Errorf("failed to transform AST to HIR: %w", err)
+	}
+
+	// Add to program
+	t.program.Files[filePath] = hirFile
+
+	return hirFile, nil
+}
+
+// transformNode transforms a PHP AST node to HIR
+func (t *ASTToHIRTransformer) transformNode(phpNode node.Node) error {
+	if phpNode == nil {
+		return nil
+	}
+
+	switch n := phpNode.(type) {
+	case *node.Root:
+		return t.transformRoot(n)
+	case *stmt.Function:
+		return t.transformFunction(n)
+	case *stmt.Class:
+		return t.transformClass(n)
+	case *stmt.Interface:
+		return t.transformInterface(n)
+	case *stmt.Trait:
+		return t.transformTrait(n)
+	case *stmt.PropertyList:
+		return t.transformPropertyList(n)
+	case *expr.FunctionCall:
+		return t.transformFunctionCall(n)
+	case *expr.MethodCall:
+		return t.transformMethodCall(n)
+	case *assign.Assign:
+		return t.transformAssign(n)
+	case *expr.Variable:
+		return t.transformVariable(n)
+	case *stmt.Echo:
+		return t.transformEcho(n)
+	case *expr.Include:
+		return t.transformInclude(n)
+	case *stmt.Return:
+		return t.transformReturn(n)
+	case *stmt.If:
+		return t.transformIf(n)
+	case *stmt.For:
+		return t.transformFor(n)
+	case *stmt.Foreach:
+		return t.transformForeach(n)
+	case *stmt.While:
+		return t.transformWhile(n)
+	case *stmt.Switch:
+		return t.transformSwitch(n)
+	case *stmt.Try:
+		return t.transformTry(n)
+	case *stmt.Throw:
+		return t.transformThrow(n)
+	case *stmt.Break:
+		return t.transformBreak(n)
+	case *stmt.Continue:
+		return t.transformContinue(n)
+	case *expr.New:
+		return t.transformNew(n)
+	case *expr.ArrayDimFetch:
+		return t.transformArrayDim(n)
+	case *expr.PropertyFetch:
+		return t.transformPropertyFetch(n)
+	case *expr.StaticPropertyFetch:
+		return t.transformStaticPropertyFetch(n)
+	case *binary.Concat:
+		return t.transformConcat(n)
+	case *stmt.Use:
+		return t.transformUse(n)
+	default:
+		// Handle children for unspecified nodes
+		return t.transformChildren(phpNode)
+	}
+}
+
+// Transform specific node types
+
+func (t *ASTToHIRTransformer) transformRoot(root *node.Root) error {
+	if root.Stmts != nil {
+		for _, stmt := range root.Stmts {
+			if err := t.transformNode(stmt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformFunction(function *stmt.Function) error {
+	// Create function symbol
+	funcName := t.getIdentifierValue(function.FunctionName)
+	fqn := t.buildFQN("", funcName)
+	
+	symbol := &Symbol{
+		ID:       SymbolID(fqn),
+		FQN:      fqn,
+		Kind:     SymFunction,
+		File:     t.currentFile.Path,
+		Position: t.getPosition(function),
+		Traits: SymbolTraits{
+			Visibility: VisPublic,  // Functions are always public
+		},
+	}
+
+	// Add to symbols
+	t.currentFile.Symbols = append(t.currentFile.Symbols, symbol)
+	t.program.Symbols.AddSymbol(symbol)
+
+	// Create HIR unit
+	unit := &HIRUnit{
+		Symbol:  symbol,
+		Params:  make([]*Variable, 0),
+		Returns: make([]*Variable, 0),
+		Body:    t.newBlock(),
+	}
+
+	// Transform parameters
+	if function.Params != nil {
+		for _, param := range function.Params {
+			if paramNode, ok := param.(*node.Parameter); ok {
+				paramVar := t.transformParameter(paramNode)
+				unit.Params = append(unit.Params, paramVar)
+			}
+		}
+	}
+
+	// Set current unit for body transformation
+	t.currentUnit = unit
+	t.pushBlock(unit.Body)
+
+	// Transform function body
+	if function.Stmts != nil {
+		for _, stmt := range function.Stmts {
+			if err := t.transformNode(stmt); err != nil {
+				return err
+			}
+		}
+	}
+
+	t.popBlock()
+	t.currentFile.Units = append(t.currentFile.Units, unit)
+
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformClass(class *stmt.Class) error {
+	className := t.getIdentifierValue(class.ClassName)
+	fqn := t.buildFQN("", className)
+
+	symbol := &Symbol{
+		ID:       SymbolID(fqn),
+		FQN:      fqn,
+		Kind:     SymClass,
+		File:     t.currentFile.Path,
+		Position: t.getPosition(class),
+	}
+
+	t.currentFile.Symbols = append(t.currentFile.Symbols, symbol)
+	t.program.Symbols.AddSymbol(symbol)
+
+	// Transform class body
+	if class.Stmts != nil {
+		for _, stmt := range class.Stmts {
+			if err := t.transformNode(stmt); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformInterface(iface *stmt.Interface) error {
+	interfaceName := t.getIdentifierValue(iface.InterfaceName)
+	fqn := t.buildFQN("", interfaceName)
+
+	symbol := &Symbol{
+		ID:       SymbolID(fqn),
+		FQN:      fqn,
+		Kind:     SymInterface,
+		File:     t.currentFile.Path,
+		Position: t.getPosition(iface),
+	}
+
+	t.currentFile.Symbols = append(t.currentFile.Symbols, symbol)
+	t.program.Symbols.AddSymbol(symbol)
+
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformTrait(trait *stmt.Trait) error {
+	traitName := t.getIdentifierValue(trait.TraitName)
+	fqn := t.buildFQN("", traitName)
+
+	symbol := &Symbol{
+		ID:       SymbolID(fqn),
+		FQN:      fqn,
+		Kind:     SymTrait,
+		File:     t.currentFile.Path,
+		Position: t.getPosition(trait),
+	}
+
+	t.currentFile.Symbols = append(t.currentFile.Symbols, symbol)
+	t.program.Symbols.AddSymbol(symbol)
+
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformPropertyList(propList *stmt.PropertyList) error {
+	for _, prop := range propList.Properties {
+		if property, ok := prop.(*stmt.Property); ok {
+			propName := t.getVariableName(property.Variable)
+			fqn := t.buildFQN("", propName)
+
+			symbol := &Symbol{
+				ID:       SymbolID(fqn),
+				FQN:      fqn,
+				Kind:     SymProperty,
+				File:     t.currentFile.Path,
+				Position: t.getPosition(property),
+			}
+
+			t.currentFile.Symbols = append(t.currentFile.Symbols, symbol)
+			t.program.Symbols.AddSymbol(symbol)
+		}
+	}
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformFunctionCall(call *expr.FunctionCall) error {
+	funcName := t.getFunctionName(call.Function)
+	
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRCall,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(call),
+	}
+	t.nextStmtID++
+
+	// Add function name as operand
+	if funcName != "" {
+		stmt.Meta = map[string]interface{}{
+			"function": funcName,
+		}
+	}
+
+	// Transform arguments
+	if call.ArgumentList != nil {
+		if argList, ok := call.ArgumentList.(*node.ArgumentList); ok {
+			for _, arg := range argList.Arguments {
+				if argument, ok := arg.(*node.Argument); ok {
+					// Transform argument expression
+					t.transformNode(argument.Expr)
+				}
+			}
+		}
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformMethodCall(call *expr.MethodCall) error {
+	methodName := t.getIdentifierValue(call.Method)
+	
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRCall,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(call),
+		Meta: map[string]interface{}{
+			"method": methodName,
+			"type":   "method_call",
+		},
+	}
+	t.nextStmtID++
+
+	// Transform receiver
+	if call.Variable != nil {
+		t.transformNode(call.Variable)
+	}
+
+	// Transform arguments
+	if call.ArgumentList != nil {
+		if argList, ok := call.ArgumentList.(*node.ArgumentList); ok {
+			for _, arg := range argList.Arguments {
+				if argument, ok := arg.(*node.Argument); ok {
+					t.transformNode(argument.Expr)
+				}
+			}
+		}
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformAssign(assignNode *assign.Assign) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRAssign,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(assignNode),
+	}
+	t.nextStmtID++
+
+	// Transform left side (target)
+	if assignNode.Variable != nil {
+		varName := t.getVariableName(assignNode.Variable)
+		if varName != "" {
+			// Get or create variable
+			variable := t.getOrCreateVariable(varName)
+			
+			// Check if right side is tainted
+			if t.isExpressionTainted(assignNode.Expression) {
+				variable.tainted = true
+				variable.AddTaintSource(TaintSource{
+					Kind:     TaintUserInput,
+					Location: t.getPosition(assign.Expression),
+					Details:  "Assignment from tainted source",
+				})
+			}
+			
+			stmt.Meta = map[string]interface{}{
+				"target": varName,
+			}
+		}
+	}
+
+	// Transform right side (source)
+	if assign.Expression != nil {
+		t.transformNode(assign.Expression)
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformVariable(variable *expr.Variable) error {
+	varName := t.getVariableName(variable)
+	if varName != "" {
+		t.getOrCreateVariable(varName)
+	}
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformEcho(echo *stmt.Echo) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIREcho,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(echo),
+	}
+	t.nextStmtID++
+
+	// Transform expressions being echoed
+	if echo.Exprs != nil {
+		for _, expr := range echo.Exprs {
+			t.transformNode(expr)
+		}
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformInclude(include *expr.Include) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRInclude,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(include),
+	}
+	t.nextStmtID++
+
+	// Transform included expression
+	if include.Expr != nil {
+		t.transformNode(include.Expr)
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformReturn(ret *stmt.Return) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRReturn,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(ret),
+	}
+	t.nextStmtID++
+
+	// Transform return expression
+	if ret.Expr != nil {
+		t.transformNode(ret.Expr)
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformIf(ifStmt *stmt.If) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRIf,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(ifStmt),
+	}
+	t.nextStmtID++
+
+	// Transform condition
+	if ifStmt.Cond != nil {
+		t.transformNode(ifStmt.Cond)
+	}
+
+	// Create new block for if body
+	ifBlock := t.newBlock()
+	t.pushBlock(ifBlock)
+
+	// Transform if body
+	if ifStmt.Stmt != nil {
+		t.transformNode(ifStmt.Stmt)
+	}
+
+	t.popBlock()
+
+	// Transform else if and else
+	if ifStmt.ElseIf != nil {
+		for _, elseIf := range ifStmt.ElseIf {
+			t.transformNode(elseIf)
+		}
+	}
+
+	if ifStmt.Else != nil {
+		elseBlock := t.newBlock()
+		t.pushBlock(elseBlock)
+		t.transformNode(ifStmt.Else)
+		t.popBlock()
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformFor(forStmt *stmt.For) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRLoop,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(forStmt),
+		Meta: map[string]interface{}{
+			"loop_type": "for",
+		},
+	}
+	t.nextStmtID++
+
+	// Transform init, condition, loop expressions
+	if forStmt.Init != nil {
+		for _, init := range forStmt.Init {
+			t.transformNode(init)
+		}
+	}
+
+	if forStmt.Cond != nil {
+		for _, cond := range forStmt.Cond {
+			t.transformNode(cond)
+		}
+	}
+
+	if forStmt.Loop != nil {
+		for _, loop := range forStmt.Loop {
+			t.transformNode(loop)
+		}
+	}
+
+	// Transform body
+	if forStmt.Stmt != nil {
+		loopBlock := t.newBlock()
+		t.pushBlock(loopBlock)
+		t.transformNode(forStmt.Stmt)
+		t.popBlock()
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformForeach(foreachStmt *stmt.Foreach) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRLoop,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(foreachStmt),
+		Meta: map[string]interface{}{
+			"loop_type": "foreach",
+		},
+	}
+	t.nextStmtID++
+
+	// Transform iterable
+	if foreachStmt.Expr != nil {
+		t.transformNode(foreachStmt.Expr)
+	}
+
+	// Transform key and value variables
+	if foreachStmt.Key != nil {
+		t.transformNode(foreachStmt.Key)
+	}
+	if foreachStmt.Variable != nil {
+		t.transformNode(foreachStmt.Variable)
+	}
+
+	// Transform body
+	if foreachStmt.Stmt != nil {
+		loopBlock := t.newBlock()
+		t.pushBlock(loopBlock)
+		t.transformNode(foreachStmt.Stmt)
+		t.popBlock()
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformWhile(whileStmt *stmt.While) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRLoop,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(whileStmt),
+		Meta: map[string]interface{}{
+			"loop_type": "while",
+		},
+	}
+	t.nextStmtID++
+
+	// Transform condition
+	if whileStmt.Cond != nil {
+		t.transformNode(whileStmt.Cond)
+	}
+
+	// Transform body
+	if whileStmt.Stmt != nil {
+		loopBlock := t.newBlock()
+		t.pushBlock(loopBlock)
+		t.transformNode(whileStmt.Stmt)
+		t.popBlock()
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformSwitch(switchStmt *stmt.Switch) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRSwitch,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(switchStmt),
+	}
+	t.nextStmtID++
+
+	// Transform switch expression
+	if switchStmt.Cond != nil {
+		t.transformNode(switchStmt.Cond)
+	}
+
+	// Transform cases
+	if switchStmt.CaseList != nil {
+		t.transformNode(switchStmt.CaseList)
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformTry(tryStmt *stmt.Try) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRTryCatch,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(tryStmt),
+	}
+	t.nextStmtID++
+
+	// Transform try body
+	if tryStmt.Stmts != nil {
+		tryBlock := t.newBlock()
+		t.pushBlock(tryBlock)
+		for _, tryStmtItem := range tryStmt.Stmts {
+			t.transformNode(tryStmtItem)
+		}
+		t.popBlock()
+	}
+
+	// Transform catches
+	if tryStmt.Catches != nil {
+		for _, catch := range tryStmt.Catches {
+			catchBlock := t.newBlock()
+			t.pushBlock(catchBlock)
+			t.transformNode(catch)
+			t.popBlock()
+		}
+	}
+
+	// Transform finally
+	if tryStmt.Finally != nil {
+		finallyBlock := t.newBlock()
+		t.pushBlock(finallyBlock)
+		t.transformNode(tryStmt.Finally)
+		t.popBlock()
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformThrow(throwStmt *stmt.Throw) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRThrow,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(throwStmt),
+	}
+	t.nextStmtID++
+
+	// Transform thrown expression
+	if throwStmt.Expr != nil {
+		t.transformNode(throwStmt.Expr)
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformBreak(breakStmt *stmt.Break) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRBreak,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(breakStmt),
+	}
+	t.nextStmtID++
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformContinue(continueStmt *stmt.Continue) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRBreak,  // Using HIRBreak for continue as well
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(continueStmt),
+		Meta: map[string]interface{}{
+			"continue": true,
+		},
+	}
+	t.nextStmtID++
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformNew(newExpr *expr.New) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRNew,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(newExpr),
+	}
+	t.nextStmtID++
+
+	// Transform class name
+	if newExpr.Class != nil {
+		className := t.getClassName(newExpr.Class)
+		stmt.Meta = map[string]interface{}{
+			"class": className,
+		}
+	}
+
+	// Transform arguments
+	if newExpr.ArgumentList != nil {
+		if argList, ok := newExpr.ArgumentList.(*node.ArgumentList); ok {
+			for _, arg := range argList.Arguments {
+				if argument, ok := arg.(*node.Argument); ok {
+					t.transformNode(argument.Expr)
+				}
+			}
+		}
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformArrayDim(arrayDim *expr.ArrayDimFetch) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRArrayDim,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(arrayDim),
+	}
+	t.nextStmtID++
+
+	// Transform variable
+	if arrayDim.Variable != nil {
+		t.transformNode(arrayDim.Variable)
+	}
+
+	// Transform dim
+	if arrayDim.Dim != nil {
+		t.transformNode(arrayDim.Dim)
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformPropertyFetch(propFetch *expr.PropertyFetch) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRFieldAccess,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(propFetch),
+	}
+	t.nextStmtID++
+
+	// Transform variable (object)
+	if propFetch.Variable != nil {
+		t.transformNode(propFetch.Variable)
+	}
+
+	// Transform property
+	if propFetch.Property != nil {
+		propName := t.getIdentifierValue(propFetch.Property)
+		stmt.Meta = map[string]interface{}{
+			"property": propName,
+		}
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformStaticPropertyFetch(staticProp *expr.StaticPropertyFetch) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRStaticAccess,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(staticProp),
+	}
+	t.nextStmtID++
+
+	// Transform class
+	if staticProp.Class != nil {
+		className := t.getClassName(staticProp.Class)
+		stmt.Meta = map[string]interface{}{
+			"class": className,
+		}
+	}
+
+	// Transform property
+	if staticProp.Property != nil {
+		propName := t.getVariableName(staticProp.Property)
+		if stmt.Meta == nil {
+			stmt.Meta = make(map[string]interface{})
+		}
+		stmt.Meta["property"] = propName
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformConcat(concat *binary.Concat) error {
+	stmt := &HIRStmt{
+		ID:       t.nextStmtID,
+		Type:     HIRConcat,
+		Operands: make([]HIRValue, 0),
+		Position: t.getPosition(concat),
+	}
+	t.nextStmtID++
+
+	// Transform left and right operands
+	if concat.Left != nil {
+		t.transformNode(concat.Left)
+	}
+	if concat.Right != nil {
+		t.transformNode(concat.Right)
+	}
+
+	t.addStmtToCurrentBlock(stmt)
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformUse(useStmt *stmt.Use) error {
+	// Handle use statements for symbol resolution
+	if useStmt.Uses != nil {
+		for _, use := range useStmt.Uses {
+			if useDecl, ok := use.(*stmt.UseDeclaration); ok {
+				alias := ""
+				fqn := ""
+				
+				if useDecl.Use != nil {
+					fqn = t.getNameValue(useDecl.Use)
+				}
+				
+				if useDecl.Alias != nil {
+					alias = t.getIdentifierValue(useDecl.Alias)
+				} else {
+					// Default alias is the last part of FQN
+					parts := strings.Split(fqn, "\\")
+					if len(parts) > 0 {
+						alias = parts[len(parts)-1]
+					}
+				}
+				
+				// Add to use bindings
+				binding := &UseBinding{
+					Alias: alias,
+					FQN:   fqn,
+					Kind:  UseClass,  // Default to class, could be refined
+					File:  t.currentFile.Path,
+				}
+				
+				key := t.currentFile.Path + "::" + alias
+				t.program.Symbols.Uses[key] = binding
+			}
+		}
+	}
+	return nil
+}
+
+// Helper methods
+
+func (t *ASTToHIRTransformer) transformChildren(phpNode node.Node) error {
+	// Generic handler for nodes we don't specifically handle
+	// This traverses children to ensure we don't miss anything
+	
+	// Use reflection or type assertions to handle common patterns
+	// For now, we'll handle known interfaces that have children
+	
+	if childrenGetter, ok := phpNode.(interface{ GetChildren() []node.Node }); ok {
+		for _, child := range childrenGetter.GetChildren() {
+			if err := t.transformNode(child); err != nil {
+				return err
+			}
+		}
+	}
+	
+	return nil
+}
+
+func (t *ASTToHIRTransformer) transformParameter(param *node.Parameter) *Variable {
+	paramName := t.getVariableName(param.Variable)
+	paramType := "mixed"  // Default type
+	
+	if param.VariableType != nil {
+		paramType = t.getTypeName(param.VariableType)
+	}
+	
+	variable := &Variable{
+		ID:           t.nextVarID,
+		Name:         paramName,
+		Type:         paramType,
+		Scope:        ScopeParameter,
+		TaintSources: make([]TaintSource, 0),
+		DefSites:     make([]StmtID, 0),
+		UseSites:     make([]StmtID, 0),
+	}
+	t.nextVarID++
+	
+	// Parameters are potentially tainted
+	variable.AddTaintSource(TaintSource{
+		Kind:     TaintArgument,
+		Location: t.getPosition(param),
+		Details:  "Function parameter",
+	})
+	
+	return variable
+}
+
+func (t *ASTToHIRTransformer) getOrCreateVariable(name string) *Variable {
+	if variable, exists := t.varMap[name]; exists {
+		return variable
+	}
+	
+	variable := &Variable{
+		ID:           t.nextVarID,
+		Name:         name,
+		Type:         "mixed",
+		Scope:        ScopeLocal,
+		TaintSources: make([]TaintSource, 0),
+		DefSites:     make([]StmtID, 0),
+		UseSites:     make([]StmtID, 0),
+	}
+	t.nextVarID++
+	
+	// Check if it's a superglobal (always tainted)
+	if t.isSuperglobal(name) {
+		variable.AddTaintSource(TaintSource{
+			Kind:     TaintUserInput,
+			Location: token.NoPos,
+			Details:  "Superglobal variable: " + name,
+		})
+	}
+	
+	t.varMap[name] = variable
+	return variable
+}
+
+func (t *ASTToHIRTransformer) isSuperglobal(name string) bool {
+	superglobals := []string{
+		"_GET", "_POST", "_REQUEST", "_COOKIE", "_FILES", "_SERVER", "_ENV", "_SESSION",
+	}
+	
+	for _, sg := range superglobals {
+		if name == sg {
+			return true
+		}
+	}
+	
+	return false
+}
+
+func (t *ASTToHIRTransformer) isExpressionTainted(expr node.Node) bool {
+	// Check if expression contains tainted variables
+	switch e := expr.(type) {
+	case *expr.Variable:
+		varName := t.getVariableName(e)
+		if variable, exists := t.varMap[varName]; exists {
+			return variable.IsTainted
+		}
+		return t.isSuperglobal(varName)
+	case *expr.ArrayDimFetch:
+		// Check if array variable is tainted
+		return t.isExpressionTainted(e.Variable)
+	case *expr.PropertyFetch:
+		// Check if object is tainted
+		return t.isExpressionTainted(e.Variable)
+	case *expr.Concat:
+		// If either side is tainted, result is tainted
+		return t.isExpressionTainted(e.Left) || t.isExpressionTainted(e.Right)
+	case *expr.FunctionCall:
+		// Some functions return tainted data
+		funcName := t.getFunctionName(e.Function)
+		taintedFunctions := []string{
+			"file_get_contents", "fread", "fgets", "stream_get_contents",
+			"curl_exec", "file", "readfile",
+		}
+		for _, tf := range taintedFunctions {
+			if funcName == tf {
+				return true
+			}
+		}
+	}
+	
+	return false
+}
+
+func (t *ASTToHIRTransformer) newBlock() *HIRBlock {
+	block := &HIRBlock{
+		ID:    t.nextBlockID,
+		Stmts: make([]*HIRStmt, 0),
+		Preds: make([]*HIRBlock, 0),
+		Succs: make([]*HIRBlock, 0),
+	}
+	t.nextBlockID++
+	return block
+}
+
+func (t *ASTToHIRTransformer) pushBlock(block *HIRBlock) {
+	t.blockStack = append(t.blockStack, block)
+}
+
+func (t *ASTToHIRTransformer) popBlock() *HIRBlock {
+	if len(t.blockStack) == 0 {
+		return nil
+	}
+	
+	block := t.blockStack[len(t.blockStack)-1]
+	t.blockStack = t.blockStack[:len(t.blockStack)-1]
+	return block
+}
+
+func (t *ASTToHIRTransformer) getCurrentBlock() *HIRBlock {
+	if len(t.blockStack) == 0 {
+		return nil
+	}
+	return t.blockStack[len(t.blockStack)-1]
+}
+
+func (t *ASTToHIRTransformer) addStmtToCurrentBlock(stmt *HIRStmt) {
+	if currentBlock := t.getCurrentBlock(); currentBlock != nil {
+		currentBlock.Stmts = append(currentBlock.Stmts, stmt)
+	}
+}
+
+// Utility functions for extracting information from PHP AST nodes
+
+func (t *ASTToHIRTransformer) getPosition(phpNode node.Node) token.Pos {
+	if phpNode == nil {
+		return token.NoPos
+	}
+	
+	// Try to get position from the node
+	if positioned, ok := phpNode.(interface{ GetPosition() *position.Position }); ok {
+		if pos := positioned.GetPosition(); pos != nil {
+			return token.Pos(pos.StartPos)
+		}
+	}
+	
+	return token.NoPos
+}
+
+func (t *ASTToHIRTransformer) getIdentifierValue(phpNode node.Node) string {
+	if ident, ok := phpNode.(*node.Identifier); ok {
+		return string(ident.Value)
+	}
+	return ""
+}
+
+func (t *ASTToHIRTransformer) getVariableName(phpNode node.Node) string {
+	if variable, ok := phpNode.(*expr.Variable); ok {
+		return t.getIdentifierValue(variable.VarName)
+	}
+	return ""
+}
+
+func (t *ASTToHIRTransformer) getFunctionName(phpNode node.Node) string {
+	switch n := phpNode.(type) {
+	case *name.Name:
+		return t.getNameValue(n)
+	case *node.Identifier:
+		return t.getIdentifierValue(n)
+	default:
+		return ""
+	}
+}
+
+func (t *ASTToHIRTransformer) getClassName(phpNode node.Node) string {
+	switch n := phpNode.(type) {
+	case *name.Name:
+		return t.getNameValue(n)
+	case *node.Identifier:
+		return t.getIdentifierValue(n)
+	default:
+		return ""
+	}
+}
+
+func (t *ASTToHIRTransformer) getNameValue(nameNode *name.Name) string {
+	if nameNode == nil {
+		return ""
+	}
+	
+	var parts []string
+	for _, part := range nameNode.Parts {
+		if ident, ok := part.(*node.Identifier); ok {
+			parts = append(parts, string(ident.Value))
+		}
+	}
+	
+	return strings.Join(parts, "\\")
+}
+
+func (t *ASTToHIRTransformer) getTypeName(phpNode node.Node) string {
+	switch n := phpNode.(type) {
+	case *node.Identifier:
+		return t.getIdentifierValue(n)
+	case *name.Name:
+		return t.getNameValue(n)
+	default:
+		return "mixed"
+	}
+}
+
+func (t *ASTToHIRTransformer) buildFQN(namespace, name string) string {
+	if namespace == "" {
+		return "\\" + name
+	}
+	return "\\" + namespace + "\\" + name
+}
+
+// GetProgram returns the transformed HIR program
+func (t *ASTToHIRTransformer) GetProgram() *HIRProgram {
+	return t.program
+}
