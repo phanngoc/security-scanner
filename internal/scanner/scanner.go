@@ -14,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/le-company/security-scanner/internal/config"
+	"github.com/le-company/security-scanner/internal/lsp"
 	"github.com/le-company/security-scanner/internal/parser"
 	"github.com/le-company/security-scanner/internal/rules"
 )
@@ -176,21 +177,19 @@ func (s *Scanner) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan *F
 func (s *Scanner) processFile(job *FileJob, findings chan<- *Finding) {
 	s.logger.Debug("Processing file", zap.String("file", job.Path))
 
-	// Get parser for the file
-	ext := filepath.Ext(job.Path)
-	fileParser := s.parserRegistry.GetParser(ext)
-
+	// Use ParserRegistry with caching for enhanced symbol table
+	enhancedSymbolTable, parseErr := s.parserRegistry.GetSymbolTable(job.Path)
+	
+	// Convert enhanced symbol table to basic for compatibility with existing rules
 	var symbolTable *parser.SymbolTable
-	var parseErr error
-
-	// Parse file if parser is available
-	if fileParser != nil {
-		symbolTable, parseErr = fileParser.Parse(job.Path, job.Content)
-		if parseErr != nil {
-			s.logger.Warn("Failed to parse file",
-				zap.String("file", job.Path),
-				zap.Error(parseErr))
-		}
+	if enhancedSymbolTable != nil {
+		symbolTable = s.convertEnhancedToBasic(enhancedSymbolTable)
+	}
+	
+	if parseErr != nil {
+		s.logger.Warn("Failed to parse file",
+			zap.String("file", job.Path),
+			zap.Error(parseErr))
 	}
 
 	// Run security rules on the file
@@ -637,5 +636,84 @@ func (s *Scanner) findingCollector(ctx context.Context, wg *sync.WaitGroup, find
 			result.Statistics.ByType[finding.Type]++
 			mu.Unlock()
 		}
+	}
+}
+
+// convertEnhancedToBasic converts enhanced LSP symbol table to basic symbol table
+func (s *Scanner) convertEnhancedToBasic(enhanced *lsp.SymbolTable) *parser.SymbolTable {
+	if enhanced == nil {
+		return nil
+	}
+	
+	basic := &parser.SymbolTable{
+		Functions: make(map[string]*parser.FunctionInfo),
+		Variables: make(map[string]*parser.VariableInfo),
+		Imports:   make(map[string]string),
+		Language:  enhanced.Language,
+		FilePath:  enhanced.FileURI,
+	}
+	
+	// Traverse the scope tree to extract symbols
+	if enhanced.ScopeTree != nil {
+		s.traverseAndConvert(enhanced.ScopeTree, basic)
+	}
+	
+	// Copy dependency imports
+	if enhanced.DependencyGraph != nil && enhanced.DependencyGraph.Nodes != nil {
+		if node, exists := enhanced.DependencyGraph.Nodes[enhanced.FileURI]; exists {
+			for importName, importPath := range node.Imports {
+				basic.Imports[importName] = importPath
+			}
+		}
+	}
+	
+	return basic
+}
+
+// traverseAndConvert recursively traverses the scope tree and converts symbols
+func (s *Scanner) traverseAndConvert(node *lsp.ScopeNode, basic *parser.SymbolTable) {
+	if node == nil {
+		return
+	}
+	
+	// Convert current node based on its kind
+	switch node.Kind {
+	case 12: // SymbolKindFunction
+		basic.Functions[node.Name] = &parser.FunctionInfo{
+			Name:     node.Name,
+			StartPos: 0, // LSP uses different position system
+			EndPos:   0, // LSP uses different position system
+			Body:     []string{node.Detail},
+			Calls:    node.CallGraph,
+		}
+	case 6: // SymbolKindMethod
+		basic.Functions[node.Name] = &parser.FunctionInfo{
+			Name:     node.Name,
+			StartPos: 0,
+			EndPos:   0,
+			Body:     []string{node.Detail},
+			Calls:    node.CallGraph,
+		}
+	case 13: // SymbolKindVariable
+		basic.Variables[node.Name] = &parser.VariableInfo{
+			Name:     node.Name,
+			Type:     node.Detail,
+			StartPos: 0,
+			EndPos:   0,
+			Scope:    node.NamePath,
+		}
+	case 14: // SymbolKindConstant
+		basic.Variables[node.Name] = &parser.VariableInfo{
+			Name:     node.Name,
+			Type:     node.Detail,
+			StartPos: 0,
+			EndPos:   0,
+			Scope:    node.NamePath,
+		}
+	}
+	
+	// Recursively process children
+	for _, child := range node.Children {
+		s.traverseAndConvert(child, basic)
 	}
 }

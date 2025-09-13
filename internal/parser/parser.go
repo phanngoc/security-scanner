@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/le-company/security-scanner/internal/cache"
@@ -251,7 +252,6 @@ func NewPHPParser() *PHPParser {
 
 // Parse parses PHP source code (simplified implementation)
 func (p *PHPParser) Parse(filePath string, content []byte) (*SymbolTable, error) {
-	// This is a simplified PHP parser - in production you'd use a proper PHP AST parser
 	symbolTable := &SymbolTable{
 		Functions: make(map[string]*FunctionInfo),
 		Variables: make(map[string]*VariableInfo),
@@ -259,10 +259,91 @@ func (p *PHPParser) Parse(filePath string, content []byte) (*SymbolTable, error)
 		Language:  "php",
 		FilePath:  filePath,
 	}
-
-	// TODO: Implement proper PHP AST parsing
-	// For now, this is a placeholder that would extract basic information
-
+	
+	// Basic regex-based parsing for functions and classes
+	contentStr := string(content)
+	
+	// Extract functions using regex
+	funcRegex := regexp.MustCompile(`(?m)^\s*(?:public|private|protected|static|\s)*\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)`)
+	funcMatches := funcRegex.FindAllStringSubmatch(contentStr, -1)
+	
+	for _, match := range funcMatches {
+		if len(match) >= 2 {
+			funcName := match[1]
+			paramStr := ""
+			if len(match) >= 3 {
+				paramStr = match[2]
+			}
+			
+			funcInfo := &FunctionInfo{
+				Name:       funcName,
+				Parameters: []Parameter{},
+				StartPos:   0, // Would need proper parsing for positions
+				EndPos:     0,
+			}
+			
+			// Basic parameter parsing
+			if paramStr != "" {
+				params := strings.Split(paramStr, ",")
+				for _, param := range params {
+					param = strings.TrimSpace(param)
+					if param != "" {
+						// Extract parameter name (very basic)
+						parts := strings.Fields(param)
+						if len(parts) > 0 {
+							paramName := parts[len(parts)-1]
+							if strings.HasPrefix(paramName, "$") {
+								paramName = paramName[1:] // Remove $ prefix
+							}
+							funcInfo.Parameters = append(funcInfo.Parameters, Parameter{
+								Name: paramName,
+								Type: "mixed", // PHP is dynamically typed
+							})
+						}
+					}
+				}
+			}
+			
+			symbolTable.Functions[funcName] = funcInfo
+		}
+	}
+	
+	// Extract class variables
+	varRegex := regexp.MustCompile(`(?m)^\s*(?:public|private|protected|static|\s)*\s*\$([a-zA-Z_][a-zA-Z0-9_]*)\s*[=;]`)
+	varMatches := varRegex.FindAllStringSubmatch(contentStr, -1)
+	
+	for _, match := range varMatches {
+		if len(match) >= 2 {
+			varName := match[1]
+			symbolTable.Variables[varName] = &VariableInfo{
+				Name:     varName,
+				Type:     "mixed",
+				StartPos: 0,
+				EndPos:   0,
+				Scope:    "class",
+			}
+		}
+	}
+	
+	// Extract use statements (imports)
+	useRegex := regexp.MustCompile(`(?m)^\s*use\s+([a-zA-Z0-9_\\]+)(?:\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*))?\s*;`)
+	useMatches := useRegex.FindAllStringSubmatch(contentStr, -1)
+	
+	for _, match := range useMatches {
+		if len(match) >= 2 {
+			fullName := match[1]
+			alias := ""
+			if len(match) >= 3 && match[2] != "" {
+				alias = match[2]
+			} else {
+				// Use last part of namespace as alias
+				parts := strings.Split(fullName, "\\")
+				alias = parts[len(parts)-1]
+			}
+			symbolTable.Imports[alias] = fullName
+		}
+	}
+	
 	return symbolTable, nil
 }
 
@@ -281,6 +362,7 @@ type ParserRegistry struct {
 	parsers       map[string]Parser
 	lspClients    map[string]*lsp.LSPClient
 	cache         *cache.SymbolTableCache
+	config        *config.Config
 	logger        *zap.Logger
 	workspaceRoot string
 }
@@ -290,16 +372,28 @@ func NewParserRegistry(workspaceRoot string, cfg *config.Config, logger *zap.Log
 	registry := &ParserRegistry{
 		parsers:       make(map[string]Parser),
 		lspClients:    make(map[string]*lsp.LSPClient),
+		config:        cfg,
 		logger:        logger,
 		workspaceRoot: workspaceRoot,
 	}
 
-	// Initialize cache
-	cacheDir := filepath.Join(workspaceRoot, ".cache")
-	if symbolCache, err := cache.NewSymbolTableCache(cacheDir, logger); err != nil {
-		logger.Warn("Failed to initialize symbol table cache", zap.Error(err))
+	// Initialize cache using configured directory
+	var cacheDir string
+	if cfg.Cache.Enabled {
+		cacheDir = cfg.Cache.Directory
+		if !filepath.IsAbs(cacheDir) {
+			cacheDir = filepath.Join(workspaceRoot, cacheDir)
+		}
 	} else {
-		registry.cache = symbolCache
+		cacheDir = filepath.Join(workspaceRoot, ".cache")
+	}
+	
+	if cfg.Cache.Enabled {
+		if symbolCache, err := cache.NewSymbolTableCache(cacheDir, logger); err != nil {
+			logger.Warn("Failed to initialize symbol table cache", zap.Error(err))
+		} else {
+			registry.cache = symbolCache
+		}
 	}
 
 	// Register default parsers
@@ -347,6 +441,13 @@ func (pr *ParserRegistry) GetOrCreateLSPClient(language string) (*lsp.LSPClient,
 
 // ParseWithLSP parses a file using LSP for enhanced symbol information
 func (pr *ParserRegistry) ParseWithLSP(filePath string, content []byte, language string) (*lsp.SymbolTable, error) {
+	// Check if LSP is disabled in config
+	if pr.config != nil && pr.config.NoLsp {
+		pr.logger.Debug("LSP disabled in configuration, using basic parsing",
+			zap.String("language", language))
+		return pr.parseWithoutLSP(filePath, content, language)
+	}
+	
 	client, err := pr.GetOrCreateLSPClient(language)
 	if err != nil {
 		pr.logger.Warn("LSP client unavailable, falling back to basic parsing",
@@ -517,6 +618,51 @@ func (pr *ParserRegistry) AnalyzeFile(filePath string) ([]*rules.SecurityFinding
 
 	// Return findings directly (they are already in correct format)
 	return findings, nil
+}
+
+// GetSymbolTable gets symbol table for a file with caching support
+func (pr *ParserRegistry) GetSymbolTable(filePath string) (*lsp.SymbolTable, error) {
+	language := pr.detectLanguage(filePath)
+
+	// Try to get from cache first
+	if pr.cache != nil {
+		if cachedTable, found := pr.cache.Get(filePath); found {
+			pr.logger.Debug("Using cached symbol table", zap.String("file", filePath))
+			return cachedTable, nil
+		}
+	}
+
+	// If not cached, build symbol table
+	// Read file content
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// Try LSP-based analysis first
+	symbolTable, err := pr.ParseWithLSP(filePath, content, language)
+	if err != nil {
+		pr.logger.Warn("LSP analysis failed, falling back to basic parser",
+			zap.String("file", filePath),
+			zap.Error(err))
+
+		// Fallback to basic parser
+		symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse file: %w", err)
+		}
+	}
+
+	// Cache the newly built symbol table
+	if pr.cache != nil && symbolTable != nil {
+		if err := pr.cache.Set(filePath, symbolTable); err != nil {
+			pr.logger.Warn("Failed to cache symbol table",
+				zap.String("file", filePath),
+				zap.Error(err))
+		}
+	}
+
+	return symbolTable, nil
 }
 
 // detectLanguage detects the programming language from file extension

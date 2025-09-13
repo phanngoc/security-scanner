@@ -377,21 +377,60 @@ func (c *LSPClient) handleResponses() {
 
 			c.logger.Debug("Received LSP response", zap.String("content", string(content)))
 
-			var resp Response
-			if err := json.Unmarshal(content, &resp); err != nil {
-				c.logger.Error("Failed to unmarshal LSP response", zap.Error(err))
+			// Validate that content looks like JSON before parsing
+			contentStr := string(content)
+			contentStr = strings.TrimSpace(contentStr)
+			
+			// Skip empty or obviously non-JSON content
+			if len(contentStr) == 0 {
+				c.logger.Debug("Skipping empty LSP response")
+				contentLength = 0
+				continue
+			}
+			
+			// Check if content starts with JSON-like characters
+			if !strings.HasPrefix(contentStr, "{") && !strings.HasPrefix(contentStr, "[") {
+				prefix := contentStr
+				if len(prefix) > 50 {
+					prefix = prefix[:50]
+				}
+				c.logger.Debug("Skipping non-JSON LSP response", zap.String("prefix", prefix))
+				contentLength = 0
 				continue
 			}
 
-			c.mu.RLock()
-			if respChan, exists := c.responses[resp.ID]; exists {
-				select {
-				case respChan <- &resp:
-				default:
-					c.logger.Warn("Response channel full", zap.Int("id", resp.ID))
+			var resp Response
+			if err := json.Unmarshal(content, &resp); err != nil {
+				// Log the actual content for debugging, but limit length
+				debugContent := contentStr
+				if len(debugContent) > 200 {
+					debugContent = debugContent[:200] + "..."
 				}
+				c.logger.Warn("Failed to unmarshal LSP response", 
+					zap.Error(err),
+					zap.String("content_preview", debugContent))
+				contentLength = 0
+				continue
 			}
-			c.mu.RUnlock()
+
+			// Handle response or notification
+			if resp.ID == 0 {
+				// This is likely a notification (no ID), which is normal in LSP
+				c.logger.Debug("Received LSP notification")
+			} else {
+				// This is a response to a request
+				c.mu.RLock()
+				if respChan, exists := c.responses[resp.ID]; exists {
+					select {
+					case respChan <- &resp:
+					default:
+						c.logger.Warn("Response channel full", zap.Int("id", resp.ID))
+					}
+				} else {
+					c.logger.Debug("Received response for unknown request", zap.Int("id", resp.ID))
+				}
+				c.mu.RUnlock()
+			}
 
 			contentLength = 0
 		}

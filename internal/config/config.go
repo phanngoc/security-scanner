@@ -18,8 +18,9 @@ type Config struct {
 	ExcludedDirs []string
 	Cache        CacheConfig
 	Rules        RulesConfig
-	MaxFiles     int  // Maximum number of files to process (0 = unlimited)
-	NoLsp        bool // Disable LSP integration
+	LSP          LSPConfig `mapstructure:"lsp"`
+	MaxFiles     int       // Maximum number of files to process (0 = unlimited)
+	NoLsp        bool      // Disable LSP integration
 }
 
 // CacheConfig holds cache configuration
@@ -42,6 +43,11 @@ type RulesConfig struct {
 	ExcludedDirs    []string `mapstructure:"excluded_dirs"`
 }
 
+// LSPConfig holds LSP configuration
+type LSPConfig struct {
+	Enabled bool `mapstructure:"enabled"`
+}
+
 // Load loads configuration from various sources
 func Load() *Config {
 	cfg := &Config{
@@ -55,6 +61,9 @@ func Load() *Config {
 			MaxSize:   1024 * 1024 * 1024, // 1GB
 			MaxAge:    168,                // 7 days in hours
 			MaxFiles:  0,                  // Default: unlimited
+		},
+		LSP: LSPConfig{
+			Enabled: true, // Default: LSP enabled
 		},
 		Rules: RulesConfig{
 			Enabled: []string{
@@ -126,6 +135,14 @@ func Load() *Config {
 	if viper.IsSet("rules") {
 		viper.UnmarshalKey("rules", &cfg.Rules)
 	}
+
+	// Load LSP configuration
+	if viper.IsSet("lsp") {
+		viper.UnmarshalKey("lsp", &cfg.LSP)
+	}
+	
+	// Set NoLsp based on LSP.Enabled
+	cfg.NoLsp = !cfg.LSP.Enabled
 
 	// Auto-detect parallel workers
 	if cfg.Parallel <= 0 {

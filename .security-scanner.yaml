@@ -102,6 +102,10 @@ performance:
   parallel: 0  # 0 = auto-detect CPU cores
   timeout: 300  # seconds
 
+# LSP configuration
+lsp:
+  enabled: false  # Disable LSP - basic parsing works perfectly and provides fast caching
+
 # Cache configuration
 cache:
   enabled: true
