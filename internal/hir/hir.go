@@ -3,6 +3,7 @@ package hir
 import (
 	"fmt"
 	"go/token"
+	"sync"
 	"time"
 )
 
@@ -19,12 +20,14 @@ type HIRProgram struct {
 	DependencyGraph *DependencyGraph    // File dependency graph
 	IncludeGraph    *IncludeGraph       // Include/require graph
 	CreatedAt       time.Time
+	mu              sync.RWMutex // Protects concurrent access
 }
 
 // HIRFile represents a single file in HIR
 type HIRFile struct {
 	Path     string
 	Language string
+	Content  string     // Original source code content
 	Symbols  []*Symbol
 	Units    []*HIRUnit // Functions, methods, closures
 	Includes []*Include // Include/require statements
@@ -645,6 +648,21 @@ func (v *Variable) AddTaintSource(source TaintSource) {
 	v.tainted = true
 }
 
+// GetType returns the HIR value type for variables
+func (v *Variable) GetType() HIRValueType {
+	return HIRVariable
+}
+
+// IsConstant returns false for variables (they can change)
+func (v *Variable) IsConstant() bool {
+	return false
+}
+
+// String returns string representation of the variable
+func (v *Variable) String() string {
+	return fmt.Sprintf("var:%s", v.Name)
+}
+
 // String implementations for debugging
 
 func (st HIRStmtType) String() string {
@@ -692,4 +710,46 @@ func (s Severity) String() string {
 		return names[s]
 	}
 	return fmt.Sprintf("Severity(%d)", s)
+}
+
+// Thread-safe methods for HIRProgram
+
+// AddFile safely adds a file to the HIR program
+func (hp *HIRProgram) AddFile(file *HIRFile) {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+	hp.Files[file.Path] = file
+}
+
+// GetFile safely retrieves a file from the HIR program
+func (hp *HIRProgram) GetFile(path string) (*HIRFile, bool) {
+	hp.mu.RLock()
+	defer hp.mu.RUnlock()
+	file, exists := hp.Files[path]
+	return file, exists
+}
+
+// AddSymbols safely adds symbols to the global symbol table
+func (hp *HIRProgram) AddSymbols(symbols []*Symbol) {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+	for _, symbol := range symbols {
+		hp.Symbols.AddSymbol(symbol)
+	}
+}
+
+// AddCFG safely adds a CFG to the program
+func (hp *HIRProgram) AddCFG(symbolID SymbolID, cfg *CFG) {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+	hp.CFGs[symbolID] = cfg
+}
+
+// SafeSymbolLinking performs symbol linking with proper locking
+func (hp *HIRProgram) SafeSymbolLinking() error {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+
+	linker := NewSymbolLinker(hp)
+	return linker.LinkSymbols()
 }

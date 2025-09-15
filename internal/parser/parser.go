@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/le-company/security-scanner/internal/cache"
 	"github.com/le-company/security-scanner/internal/config"
 	"github.com/le-company/security-scanner/internal/lsp"
 	"github.com/le-company/security-scanner/internal/rules"
@@ -360,7 +359,6 @@ type ParserRegistry struct {
 	parsers        map[string]Parser
 	lspClients     map[string]*lsp.LSPClient
 	internalEngine *lsp.InternalEngine
-	cache          *cache.SymbolTableCache
 	config         *config.Config
 	logger         *zap.Logger
 	workspaceRoot  string
@@ -375,25 +373,6 @@ func NewParserRegistry(workspaceRoot string, cfg *config.Config, logger *zap.Log
 		config:         cfg,
 		logger:         logger,
 		workspaceRoot:  workspaceRoot,
-	}
-
-	// Initialize cache using configured directory
-	var cacheDir string
-	if cfg.Cache.Enabled {
-		cacheDir = cfg.Cache.Directory
-		if !filepath.IsAbs(cacheDir) {
-			cacheDir = filepath.Join(workspaceRoot, cacheDir)
-		}
-	} else {
-		cacheDir = filepath.Join(workspaceRoot, ".cache")
-	}
-
-	if cfg.Cache.Enabled {
-		if symbolCache, err := cache.NewSymbolTableCache(cacheDir, logger); err != nil {
-			logger.Warn("Failed to initialize symbol table cache", zap.Error(err))
-		} else {
-			registry.cache = symbolCache
-		}
 	}
 
 	// Register default parsers
@@ -582,60 +561,38 @@ func (pr *ParserRegistry) convertBasicToEnhanced(basic *SymbolTable, enhanced *l
 func (pr *ParserRegistry) AnalyzeFile(filePath string) ([]*rules.SecurityFinding, error) {
 	language := pr.detectLanguage(filePath)
 
-	var symbolTable *lsp.SymbolTable
+	// Read file content
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
 
-	// Try to get from cache first
-	if pr.cache != nil {
-		if cachedTable, found := pr.cache.Get(filePath); found {
-			pr.logger.Debug("Using cached symbol table", zap.String("file", filePath))
-			symbolTable = cachedTable
+	// Use internal engine as default, external LSP as fallback
+	symbolTable, err := pr.ParseWithInternalEngine(filePath, content, language)
+	if err != nil {
+		pr.logger.Warn("Internal engine parsing failed, trying external LSP",
+			zap.String("file", filePath),
+			zap.Error(err))
+
+		// Fallback to external LSP if available and not disabled
+		if pr.config == nil || !pr.config.NoLsp {
+			symbolTable, err = pr.ParseWithLSP(filePath, content, language)
+			if err != nil {
+				pr.logger.Warn("External LSP analysis also failed, using basic parser",
+					zap.String("file", filePath),
+					zap.Error(err))
+
+				// Final fallback to basic parser
+				symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
+			}
+		} else {
+			// LSP disabled, use basic parser as final fallback
+			symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
 		}
 	}
 
-	// If not cached, build symbol table
-	if symbolTable == nil {
-		// Read file content
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read file: %w", err)
-		}
-
-		// Use internal engine as default, external LSP as fallback
-		symbolTable, err = pr.ParseWithInternalEngine(filePath, content, language)
-		if err != nil {
-			pr.logger.Warn("Internal engine parsing failed, trying external LSP",
-				zap.String("file", filePath),
-				zap.Error(err))
-
-			// Fallback to external LSP if available and not disabled
-			if pr.config == nil || !pr.config.NoLsp {
-				symbolTable, err = pr.ParseWithLSP(filePath, content, language)
-				if err != nil {
-					pr.logger.Warn("External LSP analysis also failed, using basic parser",
-						zap.String("file", filePath),
-						zap.Error(err))
-
-					// Final fallback to basic parser
-					symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
-				}
-			} else {
-				// LSP disabled, use basic parser as final fallback
-				symbolTable, err = pr.parseWithoutLSP(filePath, content, language)
-			}
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse file: %w", err)
-		}
-
-		// Cache the newly built symbol table
-		if pr.cache != nil && symbolTable != nil {
-			if err := pr.cache.Set(filePath, symbolTable); err != nil {
-				pr.logger.Warn("Failed to cache symbol table",
-					zap.String("file", filePath),
-					zap.Error(err))
-			}
-		}
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse file: %w", err)
 	}
 
 	// Create symbol-based analyzer
@@ -652,15 +609,7 @@ func (pr *ParserRegistry) AnalyzeFile(filePath string) ([]*rules.SecurityFinding
 func (pr *ParserRegistry) GetSymbolTable(filePath string) (*lsp.SymbolTable, error) {
 	language := pr.detectLanguage(filePath)
 
-	// Try to get from cache first
-	if pr.cache != nil {
-		if cachedTable, found := pr.cache.Get(filePath); found {
-			pr.logger.Debug("Using cached symbol table", zap.String("file", filePath))
-			return cachedTable, nil
-		}
-	}
-
-	// If not cached, build symbol table
+	// Build symbol table
 	// Read file content
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -694,15 +643,6 @@ func (pr *ParserRegistry) GetSymbolTable(filePath string) (*lsp.SymbolTable, err
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse file: %w", err)
-	}
-
-	// Cache the newly built symbol table
-	if pr.cache != nil && symbolTable != nil {
-		if err := pr.cache.Set(filePath, symbolTable); err != nil {
-			pr.logger.Warn("Failed to cache symbol table",
-				zap.String("file", filePath),
-				zap.Error(err))
-		}
 	}
 
 	return symbolTable, nil

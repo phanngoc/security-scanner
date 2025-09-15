@@ -13,10 +13,13 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/le-company/security-scanner/internal/analyzer"
 	"github.com/le-company/security-scanner/internal/config"
+	"github.com/le-company/security-scanner/internal/hir"
 	"github.com/le-company/security-scanner/internal/lsp"
 	"github.com/le-company/security-scanner/internal/parser"
 	"github.com/le-company/security-scanner/internal/rules"
+	"github.com/le-company/security-scanner/internal/rules/types"
 )
 
 // Scanner represents the main security scanner
@@ -25,15 +28,64 @@ type Scanner struct {
 	logger         *zap.Logger
 	ruleEngine     *rules.RuleEngine
 	parserRegistry *parser.ParserRegistry
+	hirProgram     *hir.HIRProgram
+	hirTransformer *hir.BasicTransformer
+	analyzerEngine *analyzer.AnalysisEngine
+	indexService   *hir.IndexService
 }
 
 // New creates a new scanner instance
 func New(cfg *config.Config, logger *zap.Logger) *Scanner {
+	// Initialize HIR program
+	hirProgram := &hir.HIRProgram{
+		Files:           make(map[string]*hir.HIRFile),
+		Symbols:         hir.NewGlobalSymbolTable(),
+		CallGraph:       hir.NewCallGraph(),
+		CFGs:            make(map[hir.SymbolID]*hir.CFG),
+		DependencyGraph: hir.NewDependencyGraph(),
+		IncludeGraph:    hir.NewIncludeGraph(),
+		CreatedAt:       time.Now(),
+	}
+
+	// Initialize index service
+	indexService, err := hir.NewIndexService(".", logger)
+	if err != nil {
+		logger.Warn("Failed to initialize index service", zap.Error(err))
+		indexService = nil
+	}
+
+	// Initialize analyzer registry and engine
+	registry := analyzer.NewAnalyzerRegistry()
+
+	// Load and register rules dynamically
+	ruleLoader := rules.NewLoader(logger)
+	if err := ruleLoader.LoadAllRules(registry); err != nil {
+		logger.Warn("Failed to load some rules", zap.Error(err))
+	}
+
+	// Create analysis context
+	var analysisContext *analyzer.AnalysisContext
+	if indexService != nil {
+		analysisContext = &analyzer.AnalysisContext{
+			WorkspaceIndex: indexService.GetIndex(),
+			Config:         cfg,
+			Logger:         logger,
+			Timeout:        30 * time.Second,
+		}
+	}
+
+	// Initialize analysis engine
+	analyzerEngine := analyzer.NewAnalysisEngine(registry, analysisContext)
+
 	return &Scanner{
 		config:         cfg,
 		logger:         logger,
 		ruleEngine:     rules.NewRuleEngine(cfg),
 		parserRegistry: parser.NewParserRegistry(".", cfg, logger),
+		hirProgram:     hirProgram,
+		hirTransformer: hir.NewBasicTransformer(hirProgram),
+		analyzerEngine: analyzerEngine,
+		indexService:   indexService,
 	}
 }
 
@@ -177,154 +229,292 @@ func (s *Scanner) worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan *F
 func (s *Scanner) processFile(job *FileJob, findings chan<- *Finding) {
 	s.logger.Debug("Processing file", zap.String("file", job.Path))
 
-	// Use ParserRegistry with caching for enhanced symbol table
-	enhancedSymbolTable, parseErr := s.parserRegistry.GetSymbolTable(job.Path)
-
-	// Convert enhanced symbol table to basic for compatibility with existing rules
-	var symbolTable *parser.SymbolTable
-	if enhancedSymbolTable != nil {
-		symbolTable = s.convertEnhancedToBasic(enhancedSymbolTable)
-	}
-
-	if parseErr != nil {
-		s.logger.Warn("Failed to parse file",
+	// Primary approach: HIR/CFG Analysis
+	hirFindings, hirErr := s.analyzeWithHIR(job)
+	if hirErr == nil && len(hirFindings) > 0 {
+		s.logger.Debug("HIR/CFG analysis successful",
 			zap.String("file", job.Path),
-			zap.Error(parseErr))
+			zap.Int("findings", len(hirFindings)))
+		for _, finding := range hirFindings {
+			findings <- finding
+		}
+		return // HIR analysis succeeded, skip traditional analysis
 	}
 
-	// Run security rules on the file
-	enabledRules := s.ruleEngine.GetEnabledRules()
-	for _, rule := range enabledRules {
-		if s.ruleAppliesToLanguage(rule, job.Language) {
-			fileFindings := s.checkRule(rule, job, symbolTable)
+	// if hirErr != nil {
+	// 	s.logger.Debug("HIR analysis failed, falling back to traditional analysis",
+	// 		zap.String("file", job.Path),
+	// 		zap.Error(hirErr))
+	// }
+
+	// // Fallback approach: Traditional pattern matching
+	// enhancedSymbolTable, parseErr := s.parserRegistry.GetSymbolTable(job.Path)
+
+	// // Symbol table conversion disabled for now
+	// _ = enhancedSymbolTable
+
+	// if parseErr != nil {
+	// 	s.logger.Warn("Failed to parse file",
+	// 		zap.String("file", job.Path),
+	// 		zap.Error(parseErr))
+	// }
+
+	// // Run traditional security rules on the file
+	// // Traditional rule checking temporarily disabled due to type conflicts
+	// // TODO: Unify types.Rule and rules.Rule type systems
+	// s.logger.Debug("Traditional rule checking temporarily disabled", zap.String("file", job.Path))
+
+	// The OWASP rule patterns we updated will still work through the rule providers
+	ruleProviders := s.ruleEngine.GetEnabledRuleProviders()
+	for _, provider := range ruleProviders {
+		if provider.GetRule() != nil && s.languageMatches(provider.GetRule().Languages, job.Language) {
+			fileFindings := s.checkProviderRule(provider, job)
 			for _, finding := range fileFindings {
 				findings <- finding
 			}
 		}
 	}
+
+	// OTP plaintext vulnerabilities are now handled by OTPAnalyzer through the analyzer registry
 }
 
-// checkRule checks a specific security rule against a file
-func (s *Scanner) checkRule(rule *rules.Rule, job *FileJob, symbolTable *parser.SymbolTable) []*Finding {
+// analyzeWithHIR performs HIR/CFG-based security analysis
+func (s *Scanner) analyzeWithHIR(job *FileJob) ([]*Finding, error) {
+	// Transform file content to HIR
+	hirFile, err := s.hirTransformer.TransformBasicFile(job.Path, job.Content)
+	if err != nil {
+		return nil, fmt.Errorf("HIR transformation failed: %w", err)
+	}
+
+	// Add file to HIR program (thread-safe)
+	s.hirProgram.AddFile(hirFile)
+
+	// Add symbols to global symbol table (thread-safe)
+	s.hirProgram.AddSymbols(hirFile.Symbols)
+
+	// Perform symbol linking (thread-safe)
+	if err := s.hirProgram.SafeSymbolLinking(); err != nil {
+		return nil, fmt.Errorf("symbol linking failed: %w", err)
+	}
+
+	// Ensure file is indexed with HIR data
+	if s.indexService != nil {
+		if err := s.indexService.EnsureFileIndexed(context.Background(), job.Path, job.Content, job.Language); err != nil {
+			s.logger.Warn("Failed to index file", zap.String("file", job.Path), zap.Error(err))
+		}
+	}
+
+	// Use new analyzer engine for comprehensive analysis
+	var findings []*Finding
+	if s.analyzerEngine != nil {
+		// Create analysis job
+		analysisJob := &analyzer.AnalysisJob{
+			Path:        job.Path,
+			Language:    job.Language,
+			Content:     job.Content,
+			HIRFile:     hirFile,
+			SymbolTable: nil, // Will be loaded by analyzer engine
+			CFG:         nil, // Will be loaded by analyzer engine
+			Metadata:    make(map[string]interface{}),
+		}
+
+		// Run analysis
+		analysisFindings, err := s.analyzerEngine.AnalyzeFile(context.Background(), analysisJob)
+		if err != nil {
+			s.logger.Warn("Analysis engine failed", zap.String("file", job.Path), zap.Error(err))
+		} else {
+			// Convert analysis findings to scanner findings
+			for _, analysisFinding := range analysisFindings {
+				scannerFinding := s.convertAnalysisFindingToScannerFinding(analysisFinding, job)
+				findings = append(findings, scannerFinding)
+			}
+		}
+	}
+
+	s.logger.Debug("HIR/CFG analysis completed",
+		zap.String("file", job.Path),
+		zap.Int("hir_findings", len(findings)),
+		zap.Int("converted_findings", len(findings)))
+
+	return findings, nil
+}
+
+// analyzeOTPFlowWithCFG performs CFG-based OTP flow analysis
+func (s *Scanner) analyzeOTPFlowWithCFG(job *FileJob) []*Finding {
 	var findings []*Finding
 
+	// Only analyze PHP files for OTP patterns
+	if job.Language != "php" {
+		return findings
+	}
+
+	// TODO: Implement OTP analysis with proper registry access
+	// For now, skip OTP analysis until registry access is fixed
+	s.logger.Info("OTP analysis temporarily disabled - registry access needs to be implemented")
+
+	return findings
+}
+
+// convertOTPFlowFindingToScannerFinding converts OTP flow finding to scanner finding
+func (s *Scanner) convertOTPFlowFindingToScannerFinding(otpFinding *types.SecurityFinding, job *FileJob) *Finding {
+	// Extract line number from position (simplified)
 	lines := strings.Split(string(job.Content), "\n")
-
-	for _, pattern := range rule.Patterns {
-		switch pattern.Type {
-		case rules.PatternRegex:
-			if pattern.Regex != nil {
-				findings = append(findings, s.checkRegexPattern(rule, pattern, job, lines)...)
-			}
-		case rules.PatternLiteral:
-			findings = append(findings, s.checkLiteralPattern(rule, pattern, job, lines)...)
-		case rules.PatternFunction:
-			if symbolTable != nil {
-				findings = append(findings, s.checkFunctionPattern(rule, pattern, job, symbolTable)...)
-			}
-		case rules.PatternAST:
-			if symbolTable != nil {
-				findings = append(findings, s.checkASTPattern(rule, pattern, job, symbolTable)...)
-			}
-		}
+	lineNum := otpFinding.Line
+	if lineNum == 0 {
+		lineNum = 1
 	}
 
-	return findings
+	// Get code context
+	var code string
+	if lineNum <= len(lines) {
+		code = strings.TrimSpace(lines[lineNum-1])
+	}
+
+	// Map severity
+	severity := otpFinding.Severity
+
+	// Map vulnerability type
+	var vulnType rules.VulnerabilityType
+	switch otpFinding.VulnType {
+	case types.HardcodedSecrets:
+		vulnType = rules.HardcodedSecrets
+	default:
+		vulnType = rules.HardcodedSecrets
+	}
+
+	return &Finding{
+		ID:          otpFinding.RuleID + "-" + job.Path + "-" + fmt.Sprintf("%d", lineNum),
+		RuleID:      otpFinding.RuleID,
+		Type:        vulnType,
+		Severity:    severity,
+		Title:       "OTP Code Stored in Plaintext",
+		Description: otpFinding.Message,
+		File:        job.Path,
+		Line:        lineNum,
+		Column:      1,
+		Code:        code,
+		Context:     s.getLineContext(lines, lineNum-1, 2),
+		Remediation: otpFinding.Remediation,
+		CWE:         otpFinding.CWE,
+		OWASP:       rules.OWASPReference{Top10_2021: otpFinding.OWASP.Top10_2021},
+		Confidence:  85, // Default confidence
+	}
 }
 
-// checkRegexPattern checks regex patterns against file content
-func (s *Scanner) checkRegexPattern(rule *rules.Rule, pattern rules.Pattern, job *FileJob, lines []string) []*Finding {
-	var findings []*Finding
-
-	for lineNum, line := range lines {
-		matches := pattern.Regex.FindAllStringIndex(line, -1)
-		for _, match := range matches {
-			finding := &Finding{
-				ID:          fmt.Sprintf("%s-%s-%d-%d", rule.ID, job.Path, lineNum+1, match[0]),
-				RuleID:      rule.ID,
-				Type:        rule.Type,
-				Severity:    rule.Severity,
-				Title:       rule.Name,
-				Description: rule.Description,
-				File:        job.Path,
-				Line:        lineNum + 1,
-				Column:      match[0] + 1,
-				Code:        strings.TrimSpace(line),
-				Context:     s.getLineContext(lines, lineNum, 2),
-				Remediation: rule.Remediation,
-				CWE:         rule.CWE,
-				OWASP:       rule.OWASP,
-				Confidence:  85, // Default confidence for regex matches
-			}
-			findings = append(findings, finding)
-		}
+// convertHIRFindingToScannerFinding converts HIR security finding to scanner finding
+func (s *Scanner) convertHIRFindingToScannerFinding(hirFinding *hir.SecurityFinding, job *FileJob) *Finding {
+	// Extract line number from position
+	lines := strings.Split(string(job.Content), "\n")
+	lineNum := 1
+	if hirFinding.Position > 0 && int(hirFinding.Position) < len(string(job.Content)) {
+		lineNum = strings.Count(string(job.Content)[:int(hirFinding.Position)], "\n") + 1
 	}
 
-	return findings
+	// Get code context
+	var code string
+	if lineNum <= len(lines) {
+		code = strings.TrimSpace(lines[lineNum-1])
+	}
+
+	// Map HIR severity to config severity
+	var severity config.SeverityLevel
+	switch hirFinding.Severity {
+	case hir.SeverityLow:
+		severity = config.SeverityLow
+	case hir.SeverityMedium:
+		severity = config.SeverityMedium
+	case hir.SeverityHigh:
+		severity = config.SeverityHigh
+	case hir.SeverityCritical:
+		severity = config.SeverityCritical
+	default:
+		severity = config.SeverityMedium
+	}
+
+	// Map HIR vulnerability type to rules vulnerability type
+	var vulnType rules.VulnerabilityType
+	switch hirFinding.Type {
+	case hir.VulnSQLInjection:
+		vulnType = rules.SQLInjection
+	case hir.VulnXSS:
+		vulnType = rules.XSS
+	case hir.VulnCommandInjection:
+		vulnType = rules.CommandInjection
+	case hir.VulnPathTraversal:
+		vulnType = rules.PathTraversal
+	case hir.VulnHardcodedSecret:
+		vulnType = rules.HardcodedSecrets
+	default:
+		vulnType = rules.SQLInjection // Default
+	}
+
+	return &Finding{
+		ID:          hirFinding.ID,
+		RuleID:      hirFinding.ID,
+		Type:        vulnType,
+		Severity:    severity,
+		Title:       hirFinding.Message,
+		Description: hirFinding.Description,
+		File:        job.Path,
+		Line:        lineNum,
+		Column:      1, // HIR doesn't provide column info
+		Code:        code,
+		Context:     s.getLineContext(lines, lineNum-1, 2),
+		Remediation: s.getRemediationForType(vulnType),
+		CWE:         s.getCWEForType(vulnType),
+		OWASP:       s.getOWASPForType(vulnType),
+		Confidence:  int(hirFinding.Confidence * 100), // Convert to percentage
+	}
 }
 
-// checkLiteralPattern checks literal string patterns
-func (s *Scanner) checkLiteralPattern(rule *rules.Rule, pattern rules.Pattern, job *FileJob, lines []string) []*Finding {
-	var findings []*Finding
-
-	for lineNum, line := range lines {
-		if strings.Contains(line, pattern.Pattern) {
-			index := strings.Index(line, pattern.Pattern)
-			finding := &Finding{
-				ID:          fmt.Sprintf("%s-%s-%d-%d", rule.ID, job.Path, lineNum+1, index),
-				RuleID:      rule.ID,
-				Type:        rule.Type,
-				Severity:    rule.Severity,
-				Title:       rule.Name,
-				Description: rule.Description,
-				File:        job.Path,
-				Line:        lineNum + 1,
-				Column:      index + 1,
-				Code:        strings.TrimSpace(line),
-				Context:     s.getLineContext(lines, lineNum, 2),
-				Remediation: rule.Remediation,
-				CWE:         rule.CWE,
-				OWASP:       rule.OWASP,
-				Confidence:  75, // Lower confidence for literal matches
-			}
-			findings = append(findings, finding)
-		}
+// getRemediationForType returns remediation advice for vulnerability type
+func (s *Scanner) getRemediationForType(vulnType rules.VulnerabilityType) string {
+	switch vulnType {
+	case rules.SQLInjection:
+		return "Use parameterized queries or prepared statements. Validate and sanitize all user inputs."
+	case rules.XSS:
+		return "Always encode output data. Use HTML entity encoding for HTML context, JavaScript encoding for JS context."
+	case rules.CommandInjection:
+		return "Avoid executing system commands with user input. Use allow-lists and input validation."
+	case rules.PathTraversal:
+		return "Validate file paths against a whitelist. Use absolute paths and avoid user input in file operations."
+	case rules.HardcodedSecrets:
+		return "Store secrets in environment variables or secure configuration files. Never hardcode credentials."
+	default:
+		return "Review and validate the identified security issue."
 	}
-
-	return findings
 }
 
-// checkFunctionPattern checks patterns in function calls
-func (s *Scanner) checkFunctionPattern(rule *rules.Rule, pattern rules.Pattern, job *FileJob, symbolTable *parser.SymbolTable) []*Finding {
-	var findings []*Finding
-
-	// Check function calls in symbol table
-	for funcName, funcInfo := range symbolTable.Functions {
-		for _, call := range funcInfo.Calls {
-			if strings.Contains(call, pattern.Pattern) {
-				pos := symbolTable.FileSet.Position(funcInfo.StartPos)
-				finding := &Finding{
-					ID:          fmt.Sprintf("%s-%s-%s", rule.ID, job.Path, funcName),
-					RuleID:      rule.ID,
-					Type:        rule.Type,
-					Severity:    rule.Severity,
-					Title:       rule.Name,
-					Description: fmt.Sprintf("%s in function %s", rule.Description, funcName),
-					File:        job.Path,
-					Line:        pos.Line,
-					Column:      pos.Column,
-					Code:        fmt.Sprintf("Function: %s calls %s", funcName, call),
-					Remediation: rule.Remediation,
-					CWE:         rule.CWE,
-					OWASP:       rule.OWASP,
-					Confidence:  90, // Higher confidence for function-level analysis
-				}
-				findings = append(findings, finding)
-			}
-		}
+// getCWEForType returns CWE identifier for vulnerability type
+func (s *Scanner) getCWEForType(vulnType rules.VulnerabilityType) string {
+	switch vulnType {
+	case rules.SQLInjection:
+		return "CWE-89"
+	case rules.XSS:
+		return "CWE-79"
+	case rules.CommandInjection:
+		return "CWE-78"
+	case rules.PathTraversal:
+		return "CWE-22"
+	case rules.HardcodedSecrets:
+		return "CWE-798"
+	default:
+		return "CWE-1"
 	}
+}
 
-	return findings
+// getOWASPForType returns OWASP reference for vulnerability type
+func (s *Scanner) getOWASPForType(vulnType rules.VulnerabilityType) rules.OWASPReference {
+	switch vulnType {
+	case rules.SQLInjection, rules.XSS, rules.CommandInjection:
+		return rules.OWASPReference{Top10_2021: "A03:2021"}
+	case rules.PathTraversal:
+		return rules.OWASPReference{Top10_2021: "A01:2021"}
+	case rules.HardcodedSecrets:
+		return rules.OWASPReference{Top10_2021: "A02:2021"}
+	default:
+		return rules.OWASPReference{Top10_2021: "A03:2021"}
+	}
 }
 
 // checkASTPattern checks patterns using AST analysis
@@ -362,7 +552,7 @@ func (s *Scanner) getLineContext(lines []string, lineNum, contextSize int) []str
 }
 
 // ruleAppliesToLanguage checks if a rule applies to the given language
-func (s *Scanner) ruleAppliesToLanguage(rule *rules.Rule, language string) bool {
+func (s *Scanner) ruleAppliesToLanguage(rule *types.Rule, language string) bool {
 	for _, lang := range rule.Languages {
 		if lang == "*" || lang == language {
 			return true
@@ -370,6 +560,62 @@ func (s *Scanner) ruleAppliesToLanguage(rule *rules.Rule, language string) bool 
 	}
 	return false
 }
+
+// languageMatches checks if any language in the list matches the target
+func (s *Scanner) languageMatches(languages []string, target string) bool {
+	for _, lang := range languages {
+		if lang == "*" || lang == target {
+			return true
+		}
+	}
+	return false
+}
+
+// checkProviderRule checks a rule through its provider interface
+func (s *Scanner) checkProviderRule(provider rules.RuleProvider, job *FileJob) []*Finding {
+	var findings []*Finding
+
+	// Check if provider has IsVulnerable method by trying to type assert to known types
+	isVulnerable := false
+	switch rule := provider.(type) {
+	case interface{ IsVulnerable(string, string) bool }:
+		isVulnerable = rule.IsVulnerable(string(job.Content), job.Path)
+	default:
+		// Fallback: check patterns manually for providers without IsVulnerable method
+		ruleData := provider.GetRule()
+		if ruleData != nil && len(ruleData.Patterns) > 0 {
+			for _, pattern := range ruleData.Patterns {
+				if pattern.Regex != nil && pattern.Regex.MatchString(string(job.Content)) {
+					isVulnerable = true
+					break
+				}
+			}
+		}
+	}
+
+	if isVulnerable {
+		rule := provider.GetRule()
+		finding := &Finding{
+			RuleID:      rule.ID,
+			Type:        rules.VulnerabilityType(string(provider.GetType())),
+			Severity:    rule.Severity,
+			Title:       rule.Name,
+			Description: rule.Description,
+			File:        job.Path,
+			Line:        1, // TODO: Get actual line from provider
+			Column:      1,
+			Code:        "", // Could extract code snippet
+			Remediation: rule.Remediation,
+			OWASP:       rules.OWASPReference{Top10_2021: rule.OWASP.Top10_2021},
+			CWE:         rule.CWE,
+		}
+		findings = append(findings, finding)
+	}
+
+	return findings
+}
+
+// Removed obsolete checkOTPPlaintextVulnerabilities - now handled by OTPAnalyzer directly
 
 // walkDirectory walks the directory and sends files for processing
 func (s *Scanner) walkDirectory(ctx context.Context, jobs chan<- *FileJob, result *ScanResult) error {
@@ -716,4 +962,51 @@ func (s *Scanner) traverseAndConvert(node *lsp.ScopeNode, basic *parser.SymbolTa
 	for _, child := range node.Children {
 		s.traverseAndConvert(child, basic)
 	}
+}
+
+// convertAnalysisFindingToScannerFinding converts analysis finding to scanner finding
+func (s *Scanner) convertAnalysisFindingToScannerFinding(analysisFinding *types.SecurityFinding, job *FileJob) *Finding {
+	// Extract line number from position (simplified)
+	lines := strings.Split(string(job.Content), "\n")
+	lineNum := 1
+	if analysisFinding.Line > 0 && analysisFinding.Line <= len(lines) {
+		lineNum = analysisFinding.Line
+	}
+
+	// Extract code context
+	code := ""
+	if lineNum > 0 && lineNum <= len(lines) {
+		code = strings.TrimSpace(lines[lineNum-1])
+	}
+
+	return &Finding{
+		ID:          fmt.Sprintf("%s-%s-%d", analysisFinding.RuleID, job.Path, len(job.Content)),
+		RuleID:      analysisFinding.RuleID,
+		Type:        rules.VulnerabilityType(analysisFinding.VulnType),
+		Severity:    analysisFinding.Severity,
+		Title:       analysisFinding.RuleName,
+		Description: analysisFinding.Message,
+		File:        analysisFinding.File,
+		Line:        lineNum,
+		Column:      analysisFinding.Column,
+		Code:        code,
+		Context:     []string{},
+		Remediation: analysisFinding.Remediation,
+		CWE:         analysisFinding.CWE,
+		OWASP:       rules.OWASPReference{Top10_2021: analysisFinding.OWASP.Top10_2021},
+		Confidence:  85,
+	}
+}
+
+// Close closes the scanner and cleans up resources
+func (s *Scanner) Close() error {
+	if s.indexService != nil {
+		return s.indexService.Close()
+	}
+	return nil
+}
+
+// GetIndexService returns the index service for external use
+func (s *Scanner) GetIndexService() *hir.IndexService {
+	return s.indexService
 }

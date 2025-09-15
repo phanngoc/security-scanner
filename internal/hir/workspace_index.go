@@ -431,11 +431,22 @@ func (wi *WorkspaceIndex) GetDependents(fileID int64) ([]int64, error) {
 func (wi *WorkspaceIndex) StoreCallEdge(edge *CallEdge, callSiteFileID int64, callSitePos int64) error {
 	now := time.Now().Unix()
 	_, err := wi.db.Exec(`
-		INSERT OR REPLACE INTO call_edges 
+		INSERT OR REPLACE INTO call_edges
 		(caller_symbol_id, callee_symbol_id, call_site_file_id, call_site_pos, is_direct, context, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		string(edge.Caller.Symbol.ID), string(edge.Callee.Symbol.ID),
 		callSiteFileID, callSitePos, edge.IsDirect, edge.Context, now)
+	return err
+}
+
+// StoreSymbolReference stores a symbol reference
+func (wi *WorkspaceIndex) StoreSymbolReference(fileID int64, startPos int64, endPos int64, targetSymbolID string, refType ReferenceType, context string) error {
+	now := time.Now().Unix()
+	_, err := wi.db.Exec(`
+		INSERT OR REPLACE INTO symbol_references
+		(file_id, start_pos, end_pos, target_symbol_id, reference_type, context, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		fileID, startPos, endPos, targetSymbolID, int(refType), context, now)
 	return err
 }
 

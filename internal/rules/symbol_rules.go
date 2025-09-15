@@ -43,14 +43,6 @@ type CallGraphRule struct {
 	RiskLevel      string   `json:"risk_level"`
 }
 
-// FlowAnalyzer analyzes data flow for security vulnerabilities
-type FlowAnalyzer struct {
-	SourcePatterns []string `json:"source_patterns"`
-	SinkPatterns   []string `json:"sink_patterns"`
-	SanitizeRules  []string `json:"sanitize_rules"`
-	FlowType       string   `json:"flow_type"` // "taint", "control", "data"
-}
-
 // TaintRule defines taint analysis rules
 type TaintRule struct {
 	TaintSources     []TaintSource     `json:"taint_sources"`
@@ -59,20 +51,8 @@ type TaintRule struct {
 	PropagationRules []PropagationRule `json:"propagation_rules"`
 }
 
-// TaintSource represents a source of tainted data
-type TaintSource struct {
-	SymbolPattern string   `json:"symbol_pattern"`
-	TaintTypes    []string `json:"taint_types"`
-	Confidence    float64  `json:"confidence"`
-}
-
-// TaintSink represents a dangerous operation that shouldn't receive tainted data
-type TaintSink struct {
-	SymbolPattern string               `json:"symbol_pattern"`
-	DangerousArgs []int                `json:"dangerous_args"`
-	TaintTypes    []string             `json:"taint_types"`
-	Severity      config.SeverityLevel `json:"severity"`
-}
+// Note: TaintSource and TaintSink types are defined in flow_analyzer.go
+// to avoid duplication
 
 // Sanitizer represents a function that cleans tainted data
 type Sanitizer struct {
@@ -119,37 +99,21 @@ func (sba *SymbolBasedAnalyzer) initializeSymbolBasedRules() {
 			CWE:         "CWE-89",
 			Remediation: "Use parameterized queries and validate all user inputs",
 		},
-		FlowAnalyzers: []FlowAnalyzer{
-			{
-				SourcePatterns: []string{
-					"$_GET", "$_POST", "$_REQUEST", "$_COOKIE",
-					"request.query", "request.body", "request.params",
-					"http.Request", "r.URL.Query", "r.Form",
-				},
-				SinkPatterns: []string{
-					"mysql_query", "mysqli_query", "pg_query",
-					"db.Query", "db.Exec", "database/sql.Query",
-					"SELECT", "INSERT", "UPDATE", "DELETE",
-				},
-				SanitizeRules: []string{
-					"mysqli_real_escape_string", "pg_escape_string",
-					"Prepare", "prepare", "bindParam", "bindValue",
-				},
-				FlowType: "taint",
-			},
-		},
+		FlowAnalyzers: []FlowAnalyzer{},
 		TaintRules: []TaintRule{
 			{
 				TaintSources: []TaintSource{
-					{SymbolPattern: "user_input", TaintTypes: []string{"sql_injection"}, Confidence: 0.9},
-					{SymbolPattern: "external_data", TaintTypes: []string{"sql_injection"}, Confidence: 0.8},
+					{Name: "user_input", Type: "sql_injection", Pattern: "user_input", Confidence: 0.9},
+					{Name: "external_data", Type: "sql_injection", Pattern: "external_data", Confidence: 0.8},
 				},
 				TaintSinks: []TaintSink{
 					{
-						SymbolPattern: "sql_query",
-						DangerousArgs: []int{0, 1}, // First and second arguments
-						TaintTypes:    []string{"sql_injection"},
-						Severity:      config.SeverityCritical,
+						Name:        "sql_query",
+						Type:        "sql_injection",
+						Pattern:     "sql_query",
+						VulnType:    "sql_injection",
+						Confidence:  0.9,
+						Description: "SQL query execution sink",
 					},
 				},
 				Sanitizers: []Sanitizer{
@@ -183,24 +147,7 @@ func (sba *SymbolBasedAnalyzer) initializeSymbolBasedRules() {
 			CWE:         "CWE-79",
 			Remediation: "Always encode output data according to context",
 		},
-		FlowAnalyzers: []FlowAnalyzer{
-			{
-				SourcePatterns: []string{
-					"$_GET", "$_POST", "$_REQUEST",
-					"request.query", "request.body",
-					"user_input", "external_data",
-				},
-				SinkPatterns: []string{
-					"echo", "print", "printf", "innerHTML", "outerHTML",
-					"document.write", "response.write", "HttpResponse.Write",
-				},
-				SanitizeRules: []string{
-					"htmlspecialchars", "htmlentities", "strip_tags",
-					"encodeURIComponent", "escapeHtml", "sanitizeHtml",
-				},
-				FlowType: "taint",
-			},
-		},
+		FlowAnalyzers: []FlowAnalyzer{},
 		SymbolMatchers: []SymbolMatcher{
 			{
 				SymbolKinds:  []lsp.SymbolKind{lsp.SymbolKindFunction, lsp.SymbolKindMethod},
@@ -225,25 +172,7 @@ func (sba *SymbolBasedAnalyzer) initializeSymbolBasedRules() {
 			CWE:         "CWE-78",
 			Remediation: "Never pass user input to system commands. Use parameterized APIs.",
 		},
-		FlowAnalyzers: []FlowAnalyzer{
-			{
-				SourcePatterns: []string{
-					"$_GET", "$_POST", "$_REQUEST",
-					"request.query", "request.body",
-					"os.Args", "command_line_args",
-				},
-				SinkPatterns: []string{
-					"system", "exec", "shell_exec", "passthru",
-					"os.system", "subprocess.call", "Runtime.exec",
-					"exec.Command", "cmd.Exec",
-				},
-				SanitizeRules: []string{
-					"escapeshellarg", "escapeshellcmd", "shlex.quote",
-					"whitelist_validation", "command_sanitizer",
-				},
-				FlowType: "taint",
-			},
-		},
+		FlowAnalyzers: []FlowAnalyzer{},
 		SymbolMatchers: []SymbolMatcher{
 			{
 				SymbolKinds:  []lsp.SymbolKind{lsp.SymbolKindFunction},
@@ -327,14 +256,11 @@ func (sba *SymbolBasedAnalyzer) analyzeSymbolWithRule(symbol *lsp.ScopeNode, rul
 		if sba.symbolMatchesPattern(symbol, matcher) {
 			finding := &SecurityFinding{
 				RuleID:      rule.ID,
-				Type:        rule.Type,
+				RuleName:    rule.Name,
+				VulnType:    rule.Type,
 				Severity:    rule.Severity,
-				Title:       rule.Name,
-				Description: sba.generateContextualDescription(rule, symbol),
-				Location:    sba.symbolToLocation(symbol, symbolTable),
-				Symbol:      symbol,
-				Confidence:  sba.calculateConfidence(symbol, matcher),
-				Context:     sba.extractSymbolContext(symbol, symbolTable),
+				Message:     sba.generateContextualDescription(rule, symbol),
+				Context:     strings.Join(sba.extractSymbolContext(symbol, symbolTable), " "),
 				Remediation: rule.Remediation,
 			}
 			findings = append(findings, finding)
@@ -518,8 +444,8 @@ func (sba *SymbolBasedAnalyzer) analyzeTaintFlow(symbolTable *lsp.SymbolTable, r
 	return []*SecurityFinding{}
 }
 
-// SecurityFinding represents a security finding from symbol analysis
-type SecurityFinding struct {
+// SymbolSecurityFinding represents a security finding from symbol analysis
+type SymbolSecurityFinding struct {
 	RuleID      string               `json:"rule_id"`
 	Type        VulnerabilityType    `json:"type"`
 	Severity    config.SeverityLevel `json:"severity"`
